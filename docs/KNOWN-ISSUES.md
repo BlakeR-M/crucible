@@ -1,0 +1,132 @@
+# Known issues
+
+Crucible was reviewed by its own pattern: four reviewers fanned out across the
+codebase, and every finding they raised went to independent verifiers
+instructed to refute it. Forty-five findings were raised and eighteen survived.
+
+Ten of those are fixed and the fixes are in the history. The rest are recorded
+here rather than quietly dropped, because a project whose argument is that a
+system should show what it threw away cannot keep its own list private.
+
+Each entry says what it costs and why it is still open.
+
+---
+
+## Open
+
+### Admission control is check-then-act
+`server.py` reads the active-run count and the daily spend under separate locks,
+then creates the run under a third. Twenty simultaneous requests all read zero
+and all pass. The concurrency cap and the daily ceiling are both advisory under
+a burst.
+
+**Cost:** on a credentialed demo with a handful of invited evaluators, low. On
+anything public, this is the first thing to fix. The per-run budget still holds,
+because that one reserves properly, so the exposure is bounded at N runs times
+the run ceiling rather than unbounded.
+
+**Fix:** admit under one lock that also inserts the run.
+
+### No CSRF defence beyond SameSite=Lax
+`POST /api/run` and `/api/login` have no token. SameSite=Lax stops the ordinary
+cross-site form post, but it does not separate subdomains, so anything else on
+`flow-through.com.au` could drive a run in a signed-in evaluator's browser.
+
+**Cost:** a wasted run, not a data breach. Nothing here reads or returns
+anything private.
+
+**Fix:** a signed token in the session cookie, echoed in the request.
+
+### `/static/` is served without a session
+Stylesheet and script are readable by anyone who guesses the URL. Deliberate for
+the login page, which needs them before a session exists, but it means the
+client source is public.
+
+**Cost:** none that matters. There are no secrets in it and the repository is
+open anyway.
+
+### The transcript grows quadratically
+Every step re-sends the whole conversation including every prior tool result. An
+agent that reads six files sends the first one six times.
+
+**Cost:** real money on long runs, and it is the main reason the step limit
+exists. Fine at the current scale, wrong at ten times it.
+
+**Fix:** summarise or drop older tool results once the transcript passes a
+threshold.
+
+### An exhausted agent discards everything it found
+An agent that hits its step limit returns nothing, even if it had already
+written three good findings into its reasoning.
+
+**Cost:** silent recall loss, and it looks identical to an agent that found
+nothing.
+
+**Fix:** ask for findings-so-far on the final step rather than dropping the
+agent.
+
+### A finding can survive on empty non-refutations
+A verifier that returns `refuted: false` with no `concrete_failure` still counts
+as a survival. The prompt asks for one; nothing enforces it.
+
+**Cost:** weakens the central claim, which is that a survivor is demonstrable.
+
+**Fix:** treat a non-refutation with no concrete failure as a refutation.
+
+### `SURVIVAL_THRESHOLD` is a constant, not a majority
+It is set to 2 and `VERIFIERS_PER_FINDING` to 3. Change the second and the first
+stops being a majority without saying so.
+
+**Fix:** derive it.
+
+### No Content-Security-Policy
+The page renders text written by language models. Everything goes through
+`textContent` and there is no `innerHTML` on any model-derived path, so this is
+defence in depth rather than a live hole.
+
+### Daily spend can be lost across UTC midnight
+`add_spend` books into whichever day is current when a run *finishes*, and the
+bucket resets on read. A run spanning midnight can have its spend dropped.
+
+**Cost:** at most one run's worth of ceiling, once a day.
+
+---
+
+## Fixed, for the record
+
+Full detail in the commit history.
+
+- **The command allowlist checked `argv[0]` only**, so `python -c` was arbitrary
+  code execution through a permitted binary with no shell metacharacter. A
+  verifier reproduced reading a file outside the workspace, writing five
+  megabytes past the ceiling, editing the code under review, and opening a
+  socket. This one invalidated every other guarantee in the policy.
+- An unhandled worker exception discarded every finding its siblings had
+  produced.
+- `_extract_json` miscounted brace depth inside string literals, which findings
+  quote constantly.
+- A line number written as `"42-45"` raised out of the hunt.
+- A JSON array reply reached `.get` and crashed the agent loop.
+- Lanes or findings returned as bare strings crashed the run.
+- `lanes` was unbound when the planner hit the ceiling, crashing the report that
+  was meant to explain the failure.
+- A response with no usage block was booked as free, disabling the ceiling.
+- The SSE response promised keep-alive with no length and no chunked encoding.
+- A run whose thread failed to start held its slot forever and left browsers
+  waiting on a stream that would never end.
+- Search took an untrusted pattern into a backtracking engine. Nested
+  quantifiers are now refused; the line-length cap that was tried first is not a
+  fix, since `(a+)+b` does not finish at any length worth allowing.
+
+---
+
+## Not defects, decided deliberately
+
+**`npm test` runs whatever the reviewed repository's `package.json` says.** That
+is what "run the project's own tests" means. A hostile repository could put
+anything there. Inherent to the task rather than a flaw in the guard, and the
+reason the demo target is a repository we wrote.
+
+**Default credentials are in the source.** `evaluator` / `crucible`, overridden
+by environment variables in any real deployment. Printed in the README on
+purpose: the demo is meant to be opened.
