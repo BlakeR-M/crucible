@@ -208,12 +208,23 @@ class OpenAIProvider:
             raise
         elapsed = time.time() - started
 
-        usage = payload.get("usage", {})
+        try:
+            choice = payload["choices"][0]
+            text = choice["message"].get("content") or ""
+            finish = choice.get("finish_reason", "")
+        except (KeyError, IndexError, TypeError) as exc:
+            budget.release(held)
+            raise RuntimeError(f"{model} returned no usable choice: {exc}") from exc
+
+        usage = payload.get("usage") or {}
         prompt_tokens = usage.get("prompt_tokens", estimated_prompt)
-        output_tokens = usage.get("completion_tokens", 0)
+        # A missing completion count booked as zero would make an expensive
+        # call free, and enough of those disable the ceiling entirely. Fall
+        # back to the length actually returned rather than to nothing.
+        output_tokens = usage.get("completion_tokens")
+        if not isinstance(output_tokens, int):
+            output_tokens = max(1, len(text) // 4)
         cost = budget.settle(model, held, prompt_tokens, output_tokens)
-        text = payload["choices"][0]["message"].get("content") or ""
-        finish = payload["choices"][0].get("finish_reason", "")
         if not text.strip() and finish == "length":
             # Silence because the allowance ran out reads identically to a
             # model declining to answer. Say which one it was, so a run that

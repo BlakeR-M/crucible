@@ -24,6 +24,13 @@ const S = {
   raised: 0, kept: 0, killed: 0, refused: 0,
   calls: 0, tools: 0, spend: 0,
   ledger: [],
+  // The server buffers every event and replays the whole run to a browser that
+  // reconnects, which is what makes a dropped connection recoverable. The
+  // counters below are accumulated rather than derived, so a replayed event
+  // would be counted twice and the page would show a confident wrong total.
+  // Each event carries its index; anything at or below the high-water mark has
+  // already been applied.
+  seen: -1,
 };
 
 const money = (n) => '$' + (n || 0).toFixed(4);
@@ -109,6 +116,10 @@ function listen(runId) {
   };
   source.onmessage = (m) => {
     let e; try { e = JSON.parse(m.data); } catch { return; }
+    if (typeof e.n === 'number') {
+      if (e.n <= S.seen) return;   // already applied, this is a replay
+      S.seen = e.n;
+    }
     handle(e);
   };
   source.onerror = () => {
@@ -133,6 +144,7 @@ function handle(e) {
     case 'agent_halted':
     case 'agent_error':     return onAgentStopped(e);
     case 'finding_raised':  return onRaised(e);
+    case 'finding_merged':  return onMerged(e);
     case 'verdict':         return onVerdict(e);
     case 'finding_settled': return onSettled(e);
     case 'run_failed':      return alarm(e.reason);
@@ -284,6 +296,23 @@ function onRaised(e) {
   S.trials.set(e.id, { card, pips, lbl, filled: 0, data: e });
 }
 
+function onMerged(e) {
+  // Two hunters reached the same defect independently. Shown as corroboration
+  // on the surviving card rather than quietly dropped, because a reader should
+  // know the claim arrived twice by separate routes.
+  const t = S.trials.get(e.into);
+  const dropped = S.trials.get(e.dropped);
+  // The denominator must count what actually went on trial. Raised is
+  // incremented per hunter report, and merges happen after, so without this
+  // the ratio reads 08/12 while ten cards exist.
+  if (S.raised > 0) { S.raised -= 1; $('r-all').textContent = pad2(S.raised); }
+  if (dropped) { dropped.card.remove(); S.trials.delete(e.dropped); }
+  if (!t) return;
+  t.corroborated = (t.corroborated || 0) + 1;
+  const badge = t.card.querySelector('.w');
+  if (badge) badge.textContent += `   found by ${t.corroborated + 1} lanes`;
+}
+
 function onVerdict(e) {
   const t = S.trials.get(e.finding);
   if (!t) return;
@@ -309,7 +338,11 @@ function onSettled(e) {
     card.append(el('div', 't', d.title));
     card.append(el('div', 'w', shortPath(d.file) + (d.line ? ':' + d.line : '')));
     card.append(el('div', 's', d.summary || ''));
-    card.dataset.id = e.id;
+    // Kept as a reference rather than found later by an attribute selector
+    // built from a server-supplied id. The id is generated here and is safe
+    // today, but interpolating any remote value into a selector is a habit
+    // that eventually meets a value that breaks the parse.
+    t.won = card;
     host.append(card);
   } else {
     S.killed += 1;
@@ -349,8 +382,10 @@ async function onFinish(e) {
   // The full failure scenario only travels with the final report, and it is
   // the part a reader actually checks, so it is attached now.
   (e.findings || []).forEach(f => {
-    const card = document.querySelector(`.won[data-id="${f.id}"]`);
-    if (card && f.failure_scenario) card.append(el('div', 'f', f.failure_scenario));
+    const t = S.trials.get(f.id);
+    if (t && t.won && f.failure_scenario && !t.won.querySelector('.f')) {
+      t.won.append(el('div', 'f', f.failure_scenario));
+    }
   });
 
   $('models').textContent = e.calls + ' model calls';

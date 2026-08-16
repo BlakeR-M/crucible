@@ -211,6 +211,23 @@ def start_run(task_key: str) -> tuple[str | None, str]:
     run_id = uuid.uuid4().hex[:12]
     REGISTRY.create(run_id)
 
+    def finish(reason: str, spent: float = 0.0) -> None:
+        """Close a run out so nothing is left hanging.
+
+        A run that dies without publishing run_finished holds its slot in the
+        concurrency count for the life of the process and leaves every attached
+        browser waiting on a stream that will never end. Both failures are
+        silent, which is the worst property a failure can have here.
+        """
+        REGISTRY.publish(run_id, {"kind": "run_failed", "reason": reason[:300]})
+        REGISTRY.publish(run_id, {
+            "kind": "run_finished", "run_id": run_id, "raised": 0, "survived": 0,
+            "findings": [], "spend_usd": round(spent, 5), "calls": 0,
+            "tool_calls": 0, "refusals": 0, "seconds": 0,
+            "ledger_head": "", "lanes": [], "task": task,
+            "halted": reason[:200],
+        })
+
     def work() -> None:
         ledger = Ledger(RUNS / f"{run_id}.jsonl")
         budget = Budget(ceiling_usd=RUN_CEILING_USD)
@@ -223,19 +240,18 @@ def start_run(task_key: str) -> tuple[str | None, str]:
                 emit=lambda event: REGISTRY.publish(run_id, event),
             )
             orchestrator.run(task)
-        except Exception as exc:  # noqa: BLE001 - the browser must be told
-            REGISTRY.publish(run_id, {
-                "kind": "run_failed", "reason": f"{type(exc).__name__}: {exc}"[:300],
-            })
-            REGISTRY.publish(run_id, {"kind": "run_finished", "run_id": run_id,
-                                      "raised": 0, "survived": 0, "findings": [],
-                                      "spend_usd": round(budget.spent_usd, 5),
-                                      "halted": str(exc)[:200]})
+        except BaseException as exc:  # noqa: BLE001 - the browser must be told
+            finish(f"{type(exc).__name__}: {exc}", budget.spent_usd)
         finally:
             REGISTRY.add_spend(budget.spent_usd)
             REGISTRY.reap()
 
-    threading.Thread(target=work, daemon=True, name=f"run-{run_id}").start()
+    try:
+        threading.Thread(target=work, daemon=True, name=f"run-{run_id}").start()
+    except RuntimeError as exc:
+        # The thread never started, so nothing else will ever close this run.
+        finish(f"could not start the run: {exc}")
+        return None, "the server could not start another run just now"
     return run_id, ""
 
 
@@ -401,7 +417,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache, no-transform")
-        self.send_header("Connection", "keep-alive")
+        # HTTP/1.1 with neither Content-Length nor chunked encoding leaves the
+        # message length undefined, and a proxy in front of this has to guess
+        # where the response ends. Closing the connection is what actually
+        # delimits a stream of unknown length, so say so rather than promising
+        # keep-alive on a body that never finishes.
+        self.send_header("Connection", "close")
+        self.close_connection = True
         # Nginx and several proxies in front of a deployment like this buffer a
         # response until it completes, which turns a live stream into one long
         # pause and then everything at once. This is the header that stops it.

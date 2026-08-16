@@ -1,0 +1,85 @@
+{
+  "defects": [
+    {
+      "id": "D1",
+      "file": "bookings/invoicing.py",
+      "line": 83,
+      "difficulty": "easy",
+      "summary": "build_invoice takes a mutable default argument (adjustments=[]) and appends the late-cancellation fee to it, so the list is shared by every caller for the life of the process.",
+      "failure_scenario": "Cancel two bookings inside the notice window: the first cancellation invoice is AUD 49.50 (one AUD 45.00 fee plus GST), the second is AUD 99.00 (two fees). Worse, every later invoice built without an explicit adjustments argument inherits the leftover fees, so the next ordinary 2-hour Studio A booking bills AUD 363.00 instead of AUD 264.00.",
+      "why_subtle": "The mutation is fifteen lines below the signature and only runs on the CANCELLED_LATE branch, so a single-invoice test and a normal-booking test both pass. The blast radius reaches invoices that have nothing to do with cancellations."
+    },
+    {
+      "id": "D2",
+      "file": "bookings/api.py",
+      "line": 51,
+      "difficulty": "easy",
+      "summary": "paginate computes total_pages with floor division, so any partial final page is not counted and has_next reports False while rows remain.",
+      "failure_scenario": "paginate(25 rows, page=2, page_size=10) returns total_pages=2 and has_next=False, so a client looping while page.has_next stops after 20 rows and never sees rows 21-25. With 5 rows and page_size=10 the response claims total_pages=0 despite returning 5 items.",
+      "why_subtle": "The slice itself is correct, so page contents always look right; only the page count is wrong, and it is invisible whenever the row count divides evenly by the page size, which is exactly what fixture data tends to do."
+    },
+    {
+      "id": "D3",
+      "file": "bookings/invoicing.py",
+      "line": 70,
+      "difficulty": "medium",
+      "summary": "apply_discount drops out of Decimal into binary float and Python's banker's rounding, so discounts land a cent away from the ROUND_HALF_UP value the rest of the money layer guarantees.",
+      "failure_scenario": "A 3-hour booking of a resource at AUD 50.25/hour with discount_percent=10 has a subtotal of AUD 150.75. The correct discount is AUD 15.08 (half up on 15.075) and the invoice total is AUD 149.24; apply_discount returns AUD 15.07 and the customer is billed AUD 149.25. The service already ships the correct helper, money.percentage_of, which this function bypasses.",
+      "why_subtle": "The function returns a Decimal and reads as if it stays in Decimal; the float only exists inside the expression. Any test using round percentages of round subtotals (10% of 240.00) agrees with the correct answer exactly."
+    },
+    {
+      "id": "D4",
+      "file": "bookings/service.py",
+      "line": 146,
+      "difficulty": "medium",
+      "summary": "create_booking reserves the slot and inserts the booking before building the invoice, and nothing releases the reservation when build_invoice raises BillingError.",
+      "failure_scenario": "Call create_booking for a customer with billing_email=None: BillingError propagates to the caller, but the reservation taken at line 130 stays active and the booking row stays in the repository. Every subsequent create_booking for that resource and window fails with SlotUnavailable, so a real customer is permanently locked out of a slot that was never actually sold.",
+      "why_subtle": "The failing path is tested only for the exception it raises, never for the state it leaves behind. reschedule_booking directly below shows the correct compensating release, which makes the omission read as intentional ordering rather than a missing rollback."
+    },
+    {
+      "id": "D5",
+      "file": "bookings/availability.py",
+      "line": 64,
+      "difficulty": "medium",
+      "summary": "overlaps compares with <= on both bounds, treating the half-open intervals documented by the module as closed, so touching windows are reported as conflicting.",
+      "failure_scenario": "overlaps(10:00-11:00, 11:00-12:00) returns True. Booking Studio A for 10:00-11:00 then makes an 11:00-12:00 booking fail with SlotUnavailable, and available_slots for that day hides 09:00-10:00 and 11:00-12:00 as well, so one 1-hour booking removes three hours of sellable inventory.",
+      "why_subtle": "The predicate is symmetric and looks like the textbook overlap test; genuine overlaps and clearly separated windows both answer correctly, and only the exact touching case is wrong. The half-open convention is stated in the module docstring rather than beside the comparison."
+    },
+    {
+      "id": "D6",
+      "file": "bookings/service.py",
+      "line": 126,
+      "difficulty": "medium",
+      "summary": "create_booking checks is_slot_free and then calls reserve_slot without holding repo.lock() across the pair, so the availability check and the write are not atomic.",
+      "failure_scenario": "Two API workers create a booking for Studio A 10:00-11:00 at the same time. Both pass the check before either reserves, both reserve, and the repository ends with two active reservations and two confirmed bookings on one window with no error raised: the studio is double-booked and both customers are invoiced. Reproduced by interleaving the two calls in threads.",
+      "why_subtle": "Each individual repository call is itself lock-guarded, so the code looks thread-safe at a glance; the gap is between two safe calls. reschedule_booking twenty lines below wraps the same pair in repo.lock(), and is_slot_free documents the requirement, so the correct pattern exists in the file and is simply not used here."
+    },
+    {
+      "id": "D7",
+      "file": "bookings/service.py",
+      "line": 234,
+      "difficulty": "hard",
+      "summary": "reschedule_booking invalidates the slot cache for the new date only, leaving the old resource-day entry cached with the moved booking still shown as occupied.",
+      "failure_scenario": "Load the calendar for Studio A on 2026-09-14 (caching the free slots with 10:00 taken), then reschedule that booking to 2026-09-15 13:00. The repository correctly reports 10:00 on 14 September as free, but available_slots keeps serving the stale list and never offers 10:00 again for that resource-day, so the freed hour cannot be sold. Query the day after the reschedule instead of before and the answer is correct, which is why it survives testing.",
+      "why_subtle": "It only bites on one ordering (read the old day, then reschedule) and the cache is genuinely invalidated on create and cancel, so the invalidation logic looks complete. The old date is captured nowhere in the method, and the single-line invalidation call reads as correct because the booking really did move to new_start."
+    },
+    {
+      "id": "D8",
+      "file": "bookings/auth.py",
+      "line": 43,
+      "difficulty": "hard",
+      "summary": "level_for uses `or` to apply the default level, so the suspended role's legitimate level of 0 is falsy and silently upgraded to the read-only default.",
+      "failure_scenario": "Set an account under review to role='suspended' (level 0, defined as carrying no permissions). has_permission(actor, 'booking:read') returns True and service.list_bookings returns the full customer booking list to the suspended account. Only the write permissions are actually blocked, so suspension reads as working while the account keeps live access to customer and schedule data.",
+      "why_subtle": "The fallback is a legitimate feature for unknown partner roles, and dict.get returning None makes the `or` look necessary; the bug needs the reader to notice that 0 is a real value in ROLE_LEVELS rather than a missing one, and to connect that to the permission table further down the file and to the require_permission call sites in service.py. The correct form is ROLE_LEVELS.get(actor.role, DEFAULT_LEVEL)."
+    },
+    {
+      "id": "D9",
+      "file": "bookings/api.py",
+      "line": 69,
+      "difficulty": "hard",
+      "summary": "idempotency_key_for hashes only the calendar date of the start time, so two different bookings by one customer on one resource on the same day derive the same key and the second is swallowed as a retry.",
+      "failure_scenario": "A customer books Studio A for 09:00-10:00 and later the same day books Studio A for 15:00-16:00 with no explicit Idempotency-Key. create_booking finds the derived key already bound, returns the 09:00 booking, and the caller receives a 09:00-10:00 booking it never asked for. Only one booking and one invoice exist, the 15:00 slot is never reserved, and the customer arrives at 15:00 to a room booked to someone else.",
+      "why_subtle": "The collision is hidden behind a SHA-256 digest, so the keys look opaque and unique; the derivation is in the edge module while the lookup that trusts it is in service.create_booking. Every test that passes an explicit key, or books on separate days, or books separate resources, behaves correctly, and the replay path returns a valid booking rather than raising."
+    }
+  ]
+}

@@ -24,7 +24,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from crucible.ledger import Ledger  # noqa: E402
-from crucible.orchestrator import Orchestrator, _extract_json  # noqa: E402
+from crucible.orchestrator import (  # noqa: E402
+    Orchestrator, _as_int, _as_tool_call, _extract_json,
+)
 from crucible.policy import review_policy  # noqa: E402
 from crucible.providers import Budget, Completion, Tier  # noqa: E402
 from crucible.tools import Toolbox  # noqa: E402
@@ -94,9 +96,16 @@ class RoleProvider:
                 # exercised rather than short-circuited.
                 body = {"tool": "read_file", "args": {"path": "app.py"}}
             else:
+                # Distinct lines per lane, well outside the dedupe window, so
+                # these fixtures exercise the fan-out rather than the merge.
+                # The merge has its own section below.
+                try:
+                    base = int(lane.rsplit("-", 1)[-1]) * 1000
+                except ValueError:
+                    base = 0
                 body = {"done": True, "findings": [
                     {"title": f"{lane} defect {i + 1}", "file": "app.py",
-                     "line": 10 + i, "severity": "high",
+                     "line": base + 10 * (i + 1), "severity": "high",
                      "summary": "a concrete wrong behaviour",
                      "failure_scenario": "given x, returns y",
                      "evidence": "line 10"}
@@ -150,6 +159,36 @@ def build(tmp: Path, provider, ceiling=5.0, name="run"):
 
 # ------------------------------------------------------------------ checks
 
+def wire_checks() -> None:
+    section("reading a tool call off the wire")
+    known = {"read_file", "search", "run_tests"}
+    for label, payload, expected in [
+        ("the documented shape",
+         {"tool": "read_file", "args": {"path": "a.py"}}, ("read_file", {"path": "a.py"})),
+        ("the tool name as the only key, which is what models actually send",
+         {"read_file": {"path": "a.py"}}, ("read_file", {"path": "a.py"})),
+        ("a bare string argument",
+         {"read_file": "a.py"}, ("read_file", {"path": "a.py"})),
+        ("OpenAI's function-calling shape",
+         {"name": "search", "arguments": {"pattern": "x"}}, ("search", {"pattern": "x"})),
+        ("arguments sitting beside the name rather than nested",
+         {"tool": "read_file", "path": "a.py"}, ("read_file", {"path": "a.py"})),
+        ("an action key",
+         {"action": "run_tests", "args": {"command": "pytest"}},
+         ("run_tests", {"command": "pytest"})),
+    ]:
+        check(label, _as_tool_call(payload, known) == expected,
+              str(_as_tool_call(payload, known)))
+
+    check("an unknown tool name is not a tool call",
+          _as_tool_call({"send_email": {"to": "x"}}, known) is None)
+    check("a done object is not a tool call",
+          _as_tool_call({"done": True, "refuted": False}, known) is None)
+    check("a bare object with several keys is not a tool call",
+          _as_tool_call({"read_file": {"path": "a"}, "note": "hi"}, known) is None)
+    check("a non-dict is not a tool call", _as_tool_call(["read_file"], known) is None)
+
+
 def parsing_checks() -> None:
     section("json extraction")
     check("a bare object parses", _extract_json('{"a":1}') == {"a": 1})
@@ -161,6 +200,27 @@ def parsing_checks() -> None:
           _extract_json('text {"a":{"b":[1,2]}} more') == {"a": {"b": [1, 2]}})
     check("unparseable text returns None rather than raising",
           _extract_json("no json here at all") is None)
+    check("a brace inside a string literal does not end the object early",
+          _extract_json('{"note": "returns {} on failure", "n": 1}')
+          == {"note": "returns {} on failure", "n": 1})
+    check("an escaped quote inside a string does not confuse the scan",
+          _extract_json(r'prose {"q": "he said \"} \" here", "n": 2} tail')
+          == {"q": 'he said "} " here', "n": 2})
+    check("a stray closing brace before the object is ignored",
+          _extract_json('} leftover {"a": 1}') == {"a": 1})
+
+    section("values as models actually write them")
+    for label, raw, expected in [
+        ("a plain integer", 42, 42),
+        ("a numeric string", "42", 42),
+        ("a range takes its first number", "42-45", 42),
+        ("a prose line reference", "line 7", 7),
+        ("a float", 12.0, 12),
+        ("nothing at all", None, 0),
+        ("unparseable text", "somewhere", 0),
+        ("a boolean is not a line number", True, 0),
+    ]:
+        check(f"line number from {label}", _as_int(raw) == expected, str(_as_int(raw)))
 
 
 def run_checks(tmp: Path) -> None:
@@ -220,6 +280,45 @@ def survival_checks(tmp: Path) -> None:
         orchestrator, _, _ = build(tmp, provider, name=label[:8])
         check(label, orchestrator.run("t").survived == expected)
 
+    section("malformed model output cannot kill a run")
+
+    class Nonsense(RoleProvider):
+        """A model that answers in shapes the schema never promised."""
+
+        def complete(self, system, user, tier, budget, **kw):
+            if tier is Tier.PLANNER:
+                body = {"lanes": ["just a string", {"name": "lane-1",
+                                                    "brief": "b", "files": []}]}
+            elif tier is Tier.WORKER and "not a single JSON object" not in user:
+                # Answers with an array on the first turn, then behaves once
+                # nudged. Keyed on the nudge text rather than on a tool call,
+                # since a reply the loop cannot read never runs a tool.
+                body = ["an", "array", "not", "an", "object"]
+            elif tier is Tier.WORKER:
+                body = {"done": True, "findings": [
+                    "a bare string finding",
+                    {"title": "real one", "file": "app.py", "line": "42-47",
+                     "severity": "high", "summary": "s", "failure_scenario": "f"},
+                ]}
+            else:
+                body = {"done": True, "refuted": False, "confidence": "high",
+                        "reasoning": "r", "concrete_failure": "c"}
+            text = json.dumps(body)
+            held = budget.reserve("gpt-5-mini", 10, kw.get("max_output", 100))
+            budget.settle("gpt-5-mini", held, 10, len(text) // 4)
+            return Completion(text, "role", 10, 10, 0.0, 0.0)
+
+    orchestrator, events, ledger = build(tmp, Nonsense(), name="junky")
+    report = orchestrator.run("t")
+    check("a lane returned as a bare string is dropped, not fatal",
+          report.lanes == ["lane-1"])
+    check("an array reply is treated as unparseable rather than crashing",
+          any(e["kind"] == "agent_done" for e in events))
+    check("a finding returned as a bare string is dropped", report.raised == 1)
+    check("a line number written as a range still parses",
+          report.findings and report.findings[0]["line"] == 42)
+    check("and the run completed normally", not report.halted)
+
     section("failing safely")
     provider = RoleProvider(lanes=1, findings_per_lane=1,
                             verifier_returns_junk=True)
@@ -278,6 +377,51 @@ def policy_checks(tmp: Path) -> None:
           any(e["kind"] == "agent_done" for e in events))
 
 
+def dedupe_checks(tmp: Path) -> None:
+    section("collapsing the same defect found twice")
+
+    class Twins(RoleProvider):
+        """Two lanes that both report the same line, plus one that differs."""
+
+        def complete(self, system, user, tier, budget, **kw):
+            if tier is Tier.WORKER and ">>> you called" in user:
+                lane = "?"
+                for line in user.splitlines():
+                    if line.startswith("YOUR LANE:"):
+                        lane = line.split(":", 1)[1].strip()
+                line_no = 10 if lane == "lane-1" else (12 if lane == "lane-2" else 90)
+                body = {"done": True, "findings": [{
+                    "title": f"{lane} says line {line_no}", "file": "app.py",
+                    "line": line_no, "severity": "high", "summary": "wrong",
+                    "failure_scenario": "x" * (20 if lane == "lane-2" else 5),
+                    "evidence": "e",
+                }]}
+                text = json.dumps(body)
+                held = budget.reserve("gpt-5-mini", 10, kw.get("max_output", 100))
+                budget.settle("gpt-5-mini", held, 10, len(text) // 4)
+                return Completion(text, "role", 10, 10, 0.0, 0.0)
+            return super().complete(system, user, tier, budget, **kw)
+
+    provider = Twins(lanes=3, findings_per_lane=1, verdicts=[False] * 9)
+    orchestrator, events, ledger = build(tmp, provider, name="dupe")
+    report = orchestrator.run("t")
+
+    check("two hunters reporting the same line collapse to one finding",
+          report.raised == 2)
+    check("a finding elsewhere in the file is left alone",
+          report.survived == 2)
+    check("the merge was announced",
+          any(e["kind"] == "finding_merged" for e in events))
+    check("the merge is in the ledger",
+          any(e["event"] == "finding_merged" for e in ledger.entries()))
+    check("the survivor keeps the fuller failure account",
+          any(len(f["failure_scenario"]) == 20 for f in report.findings))
+    check("corroboration is counted rather than discarded",
+          any(f["duplicates"] == 1 for f in report.findings))
+    check("only the surviving claims were verified, so no verifier was wasted",
+          provider.by_tier.get("verifier", 0) == 6)
+
+
 def concurrency_checks(tmp: Path) -> None:
     section("the ledger under load")
     # Six lanes, three findings each, three verifiers per finding: 54 verifier
@@ -297,10 +441,12 @@ def concurrency_checks(tmp: Path) -> None:
 def main() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
+        wire_checks()
         parsing_checks()
         run_checks(tmp)
         survival_checks(tmp)
         policy_checks(tmp)
+        dedupe_checks(tmp)
         concurrency_checks(tmp)
     print(f"\n{PASSED} checks passed, {len(FAILED)} failed")
     if FAILED:

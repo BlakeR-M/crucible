@@ -79,9 +79,50 @@ def policy_checks(tmp: Path) -> None:
     check("a tool with no path scope refuses a path outright",
           not Policy("p", {"ping": ToolRule()}).check("ping", {"path": str(work)}))
 
+    section("policy: an allowlisted binary is not an allowlisted behaviour")
+    # Every one of these uses a permitted binary and contains no shell
+    # metacharacter, so the metacharacter guard never sees them. Each was
+    # reproduced end to end before the argument checks existed: reading a file
+    # outside the workspace, writing past the size ceiling, editing the code
+    # under review, and opening a socket.
+    for payload in (
+        'python -c "print(open(r\'C:\\Windows\\win.ini\').read())"',
+        'python -c "import urllib.request"',
+        "python --command \"import os\"",
+        'node -e "require(\'fs\')"',
+        'node --eval "1"',
+        "node -r ./evil.js app.js",
+        "python -i",
+        "python",
+    ):
+        check(f"refused: {payload[:44]}",
+              not pol.check("run_tests", {"command": payload}))
+    check("the refusal explains why an interpreter flag is different",
+          "execute" in pol.check(
+              "run_tests", {"command": 'python -c "x"'}).reason)
+    check("python -m is limited to test runners",
+          not pol.check("run_tests", {"command": "python -m http.server"}))
+    check("python -m with no module is refused",
+          not pol.check("run_tests", {"command": "python -m"}))
+    check("an interpreter pointed at a file outside the workspace is refused",
+          not pol.check("run_tests", {"command": r"python C:\Windows\evil.py"}))
+    check("a runner pointed at a config outside the workspace is refused",
+          not pol.check("run_tests",
+                        {"command": r"pytest C:\Windows\Temp\conftest.py"}))
+
     section("policy: commands")
     check("a permitted binary runs",
           bool(pol.check("run_tests", {"command": "python -m pytest"})))
+    check("running the workspace's own tests still works",
+          bool(pol.check("run_tests",
+                         {"command": "python -m unittest discover"})))
+    check("a file inside the workspace can be run",
+          bool(pol.check("run_tests",
+                         {"command": f'python "{work / "src" / "app.py"}"'})))
+    check("pytest with ordinary flags still works",
+          bool(pol.check("run_tests", {"command": "pytest -q --tb=short"})))
+    check("npm test still works",
+          bool(pol.check("run_tests", {"command": "npm test"})))
     check("an absolute path to a permitted binary still runs",
           bool(pol.check("run_tests", {"command": r'"C:\Python311\python.exe" -m pytest'})))
     check("case and extension do not smuggle a binary past the list",
@@ -124,6 +165,36 @@ def policy_checks(tmp: Path) -> None:
           not small.check("put", {"path": str(work / "a"), "content": "x" * 11}))
     check("the size refusal quotes both numbers",
           "11" in small.check("put", {"path": str(work / "a"), "content": "x" * 11}).reason)
+
+    section("search is bounded against a hostile pattern")
+    import time as _time
+    from crucible.ledger import Ledger as _Ledger
+    from crucible.tools import Toolbox as _Toolbox
+
+    box = _Toolbox(work, pol, _Ledger(tmp / "search.jsonl"))
+    (work / "src" / "long.py").write_text("x = '" + "a" * 6000 + "'\n",
+                                          encoding="utf-8")
+    started = _time.monotonic()
+    # The textbook exponential blow-up. A line-length cap does not save you
+    # here: at any length worth allowing, (a+)+b still does not finish.
+    result = box.invoke("search", {"path": str(work), "pattern": r"(a+)+b"})
+    elapsed = _time.monotonic() - started
+    check("a catastrophic pattern returns instead of hanging", elapsed < 5,
+          f"took {elapsed:.1f}s")
+    check("and it is refused with a reason rather than run",
+          not result.ok and "exponential" in result.reason)
+    for nasty in (r"(a*)*b", r"(\w+)+$", r"(x+x+)+y", r"(a+){3,}"):
+        check(f"also refused: {nasty}",
+              not box.invoke("search", {"path": str(work), "pattern": nasty}).ok)
+    check("an ordinary quantifier is still allowed",
+          box.invoke("search", {"path": str(work), "pattern": r"def \w+\("}).ok)
+    check("an over-long pattern is rejected",
+          not box.invoke("search", {"path": str(work), "pattern": "a" * 500}).ok)
+    check("an invalid pattern is reported rather than raised",
+          not box.invoke("search", {"path": str(work), "pattern": "((("}).ok)
+    check("an ordinary search still finds what it should",
+          "app.py" in box.invoke(
+              "search", {"path": str(work), "pattern": r"x = 1"}).content)
 
     section("policy: failure is refusal")
     check("an argument that cannot be checked refuses rather than raises",

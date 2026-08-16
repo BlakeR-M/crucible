@@ -28,6 +28,24 @@ from pathlib import Path
 # carry an unpermitted one in its arguments.
 SHELL_METACHARACTERS = re.compile(r"[;&|`$><\n\r]|\$\(|\)\s*\{")
 
+# Binaries that will run whatever you hand them.
+INTERPRETERS = {"python", "python2", "python3", "py", "node", "nodejs", "deno", "bun"}
+
+# The flags that turn a permitted interpreter into arbitrary code execution.
+# This is the hole an allowlist of binary names leaves wide open: `python -c`
+# needs no shell metacharacter, so the metacharacter guard never fires, and it
+# grants every capability the rest of the policy just refused. Reading a file
+# outside the workspace, writing past the size ceiling, editing the code under
+# review and opening a socket are all one argument away.
+CODE_EXECUTION_FLAGS = {
+    "-c", "--command", "-e", "--eval", "--eval-file", "-i", "--interactive",
+    "-p", "--print", "-r", "--require", "--input-type", "--experimental-eval",
+    "-x", "--exec",
+}
+
+# `python -m X` runs module X, so the module needs an allowlist of its own.
+PERMITTED_MODULES = {"pytest", "unittest", "nose2", "green"}
+
 
 @dataclass(frozen=True)
 class Decision:
@@ -157,6 +175,73 @@ class Policy:
                 f"'{binary}' is not a permitted command for '{tool}' ({allowed})",
                 tool,
             )
+
+        # Everything past argv[0] is checked too, which is the whole point.
+        # A binary allowlist is not a behaviour allowlist: every interpreter on
+        # any sensible list will run caller-supplied code if asked in the right
+        # way, and then path containment, the write ceiling and the no-network
+        # rule are all decoration.
+        args = [p.strip('"') for p in parts[1:]]
+        for token in args:
+            if token.lower() in CODE_EXECUTION_FLAGS:
+                return Decision(
+                    False,
+                    f"'{token}' hands code to '{binary}' to execute, which would "
+                    f"reach past every other limit in this policy",
+                    tool,
+                )
+
+        if binary in INTERPRETERS:
+            # An interpreter may run a test module or a file inside the
+            # workspace. Nothing else, because nothing else is what this tool
+            # is for.
+            if not args:
+                return Decision(False, f"'{binary}' with no arguments opens a "
+                                       f"shell, which is refused", tool)
+            if args[0] == "-m":
+                module = args[1].lower() if len(args) > 1 else ""
+                if module not in PERMITTED_MODULES:
+                    permitted = ", ".join(sorted(PERMITTED_MODULES))
+                    return Decision(
+                        False,
+                        f"'{binary} -m {module or '(nothing)'}' is refused; "
+                        f"permitted modules are {permitted}",
+                        tool,
+                    )
+            elif args[0].startswith("-"):
+                return Decision(
+                    False,
+                    f"'{binary} {args[0]}' is refused; run a test module with "
+                    f"-m or a file inside the workspace",
+                    tool,
+                )
+            else:
+                verdict = self._check_path(tool, rule, args[0])
+                if not verdict:
+                    return Decision(
+                        False,
+                        f"'{binary}' may only run a file inside the workspace: "
+                        f"{verdict.reason}",
+                        tool,
+                    )
+
+        # Any remaining argument that names an existing file has to be inside
+        # the workspace too, so a permitted runner cannot be pointed at a
+        # config or test file somewhere else on the disk.
+        for token in args:
+            if token.startswith("-") or not token:
+                continue
+            try:
+                candidate = Path(token)
+            except (ValueError, OSError):
+                continue
+            if candidate.is_absolute() and not self._check_path(tool, rule, token):
+                return Decision(
+                    False,
+                    f"'{token}' sits outside the workspace, so '{binary}' may "
+                    f"not be pointed at it",
+                    tool,
+                )
         return Decision(True, "permitted command", tool)
 
     def _check_url(self, tool: str, rule: ToolRule, raw: str) -> Decision:

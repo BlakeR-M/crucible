@@ -249,6 +249,11 @@ What they actually cover, beyond the happy path:
 
 - **The demo target is synthetic.** Real codebases are larger, messier, and have
   history. Recall on this target says little about recall on yours.
+- **Runs vary.** Three consecutive runs against the same nine planted defects
+  found seven, seven and six, and not the same seven. Different runs catch
+  different hard defects: one found the reschedule cache-invalidation miss and
+  missed the falsy-role auth bypass, the next did the reverse. Quote a range,
+  never a single number, and treat any single run as a sample.
 - **Three verifiers is a small panel**, chosen so a run finishes while someone
   is watching it. Reducing false positives further wants more of them, or a
   verifier from a different model family, or both.

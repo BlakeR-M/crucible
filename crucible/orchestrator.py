@@ -54,6 +54,10 @@ class Finding:
     evidence: str = ""
     verdicts: list = field(default_factory=list)
     survived: bool = False
+    # How many other hunters independently raised the same thing. Reported
+    # rather than hidden: two lanes arriving at one defect separately is
+    # corroboration and worth a reader knowing.
+    duplicates: int = 0
 
     @property
     def refutations(self) -> int:
@@ -162,6 +166,50 @@ Final answer:
 """
 
 
+def _as_tool_call(parsed: dict, known: set[str]) -> tuple[str, dict] | None:
+    """Recognise a tool call in whichever shape the model chose to write it.
+
+    The documented protocol is {"tool": name, "args": {...}}. Models reliably
+    write something else instead: the tool name as the only key, OpenAI's
+    function-calling shape, or the arguments inline beside the name. Insisting
+    on one spelling does not make the model comply, it makes the agent spend
+    every step being told it is wrong and then get recorded as having failed.
+    That is not a hypothetical: it refuted an entire run's findings, because a
+    verifier that never answers counts against the finding it was judging.
+
+    So the wire format is read generously and the record still shows exactly
+    which tool ran with which arguments. Nothing is widened by this: an
+    unrecognised name falls through to None, and the policy checks the call
+    afterwards either way.
+    """
+    if not isinstance(parsed, dict):
+        return None
+
+    # {"tool": "read_file", "args": {...}} and its near neighbours.
+    for name_key in ("tool", "name", "action", "function"):
+        name = parsed.get(name_key)
+        if isinstance(name, str) and name in known:
+            for args_key in ("args", "arguments", "parameters", "input"):
+                args = parsed.get(args_key)
+                if isinstance(args, dict):
+                    return name, args
+            # Arguments sitting beside the name rather than nested under it.
+            inline = {k: v for k, v in parsed.items()
+                      if k not in ("tool", "name", "action", "function")}
+            return name, inline
+
+    # {"read_file": {"path": "..."}} — the tool name as the only key.
+    keys = [k for k in parsed if k in known]
+    if len(keys) == 1 and len(parsed) == 1:
+        args = parsed[keys[0]]
+        if isinstance(args, dict):
+            return keys[0], args
+        if isinstance(args, str):
+            # {"read_file": "path/to/file.py"}
+            return keys[0], {"path": args}
+    return None
+
+
 def _extract_json(text: str) -> dict | None:
     """Pull one JSON object out of a model reply.
 
@@ -181,20 +229,52 @@ def _extract_json(text: str) -> dict | None:
             return json.loads(fenced.group(1))
         except json.JSONDecodeError:
             pass
-    depth, start = 0, None
+    # Balanced-brace scan, skipping anything inside a string literal. Without
+    # the string tracking a brace in prose ("returns {} on failure") or in an
+    # escaped quote throws the depth count off, and the scanner either cuts the
+    # object short or never closes it. Findings quote code, so braces inside
+    # strings are the normal case here rather than the exotic one.
+    depth, start, in_string, escaped = 0, None, False, False
     for i, ch in enumerate(text):
-        if ch == "{":
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
             if depth == 0:
                 start = i
             depth += 1
         elif ch == "}":
-            depth -= 1
-            if depth == 0 and start is not None:
-                try:
-                    return json.loads(text[start:i + 1])
-                except json.JSONDecodeError:
-                    start = None
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except json.JSONDecodeError:
+                        start = None
     return None
+
+
+def _as_int(value, default: int = 0) -> int:
+    """A line number as the model chose to write it.
+
+    Models return "42", 42, "42-45" and "line 42". int() raises on three of
+    those, and an exception here kills an agent that had already done the work.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    match = re.search(r"\d+", str(value or ""))
+    return int(match.group()) if match else default
 
 
 # ------------------------------------------------------------- orchestrator
@@ -211,6 +291,9 @@ class Orchestrator:
         self._emit = emit or (lambda event: None)
         self._emit_lock = threading.Lock()
         self.toolbox = Toolbox(self.workspace, policy, ledger)
+        # Taken from the policy rather than hardcoded, so a tool added to the
+        # policy is recognised on the wire without a second edit here.
+        self._tool_names = set(policy.rules)
 
     def emit(self, kind: str, **payload) -> None:
         """One event out to whoever is watching, serialised.
@@ -251,10 +334,16 @@ class Orchestrator:
                       seconds=round(reply.seconds, 1))
 
             parsed = _extract_json(reply.text)
+            # A reply that parses as a JSON array is valid JSON and not a
+            # message this loop can act on. Treated as unparseable rather than
+            # allowed to reach .get and raise AttributeError.
+            if not isinstance(parsed, dict):
+                parsed = None
             if parsed is None:
                 transcript += (
-                    f"\n\nYour reply was not a single JSON object. Reply with one "
-                    f"JSON object and nothing else."
+                    "\n\nYour reply was not a single JSON object. Reply with one "
+                    'JSON object and nothing else, for example '
+                    '{"tool": "read_file", "args": {"path": "app.py"}}'
                 )
                 continue
 
@@ -262,20 +351,30 @@ class Orchestrator:
                 self.emit("agent_done", agent=agent_id, step=step)
                 return parsed
 
-            tool = parsed.get("tool")
-            if not tool:
-                transcript += "\n\nReply with either a tool call or a done object."
+            call = _as_tool_call(parsed, self._tool_names)
+            if call is None:
+                # Say what was wrong with the reply that was actually sent, and
+                # show the shape again. A bare "do it properly" produces the
+                # same reply on the next turn and the turn after that.
+                transcript += (
+                    f"\n\nThat was not a tool call I could read, and no tool ran. "
+                    f"Available tools: {', '.join(sorted(self._tool_names))}. "
+                    f'Use exactly this shape: '
+                    f'{{"tool": "read_file", "args": {{"path": "app.py"}}}} '
+                    f'or finish with {{"done": true, ...}}.'
+                )
                 continue
 
-            result = tools.invoke(tool, parsed.get("args", {}) or {})
+            tool, args = call
+            result = tools.invoke(tool, args)
             self.emit(
                 "tool", agent=agent_id, tool=tool,
-                args=self.toolbox._safe_args(parsed.get("args", {}) or {}),
+                args=self.toolbox._safe_args(args),
                 refused=result.refused, reason=result.reason,
                 bytes=len(result.content),
             )
             transcript += (
-                f"\n\n>>> you called {tool}({json.dumps(parsed.get('args', {}))})"
+                f"\n\n>>> you called {tool}({json.dumps(args)})"
                 f"\n{result.as_text()}"
             )
 
@@ -301,7 +400,12 @@ class Orchestrator:
             self.emit("phase_failed", phase="plan", reason=str(exc)[:200])
             return []
         parsed = _extract_json(reply.text) or {}
-        lanes = [l for l in parsed.get("lanes", []) if l.get("name")][:6]
+        # Only well-formed lanes. A planner that returns a list of bare strings
+        # would otherwise crash the run at the first .get on a str.
+        lanes = [
+            l for l in (parsed.get("lanes") or [])
+            if isinstance(l, dict) and l.get("name")
+        ][:6]
         self.ledger.append("plan", lanes=[l["name"] for l in lanes])
         for lane in lanes:
             self.emit("lane", name=lane["name"], brief=lane.get("brief", ""))
@@ -331,6 +435,12 @@ class Orchestrator:
             raw = (answer or {}).get("findings", []) or []
             produced = []
             for item in raw:
+                # A model that returns a list of strings, or a finding with no
+                # summary, is a model that did not follow the shape. Skip it
+                # rather than let it raise out of the worker, because an
+                # exception here takes the whole lane's work with it.
+                if not isinstance(item, dict):
+                    continue
                 if not item.get("title") or not item.get("summary"):
                     continue
                 produced.append(Finding(
@@ -338,7 +448,7 @@ class Orchestrator:
                     lane=lane["name"],
                     title=str(item.get("title"))[:140],
                     file=str(item.get("file", "")),
-                    line=int(item.get("line") or 0),
+                    line=_as_int(item.get("line")),
                     severity=str(item.get("severity", "medium")).lower(),
                     summary=str(item.get("summary"))[:500],
                     failure_scenario=str(item.get("failure_scenario", ""))[:800],
@@ -356,8 +466,86 @@ class Orchestrator:
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             futures = [pool.submit(one_lane, i, lane) for i, lane in enumerate(lanes)]
             for future in as_completed(futures):
-                future.result()
+                # One worker throwing must not discard what the others found.
+                # Left unhandled, result() re-raises here and the entire phase
+                # is lost along with every finding already in hand, which is
+                # the most expensive possible way to fail.
+                try:
+                    future.result()
+                except Exception as exc:  # noqa: BLE001
+                    self.emit("worker_failed", reason=f"{type(exc).__name__}: {exc}"[:200])
+                    self.ledger.append("worker_failed",
+                                       reason=f"{type(exc).__name__}: {exc}"[:300])
         return findings
+
+    def _source_around(self, finding: Finding, span: int = 45) -> str:
+        """The code the claim is about, handed over rather than hunted for.
+
+        A verifier that has to locate the file first spends its steps on
+        navigation, and a run's worth of them spending steps that way is a run
+        where nothing gets judged on its merits. The window is generous and the
+        tools stay available, so a verdict that needs wider reading can still
+        go and get it.
+        """
+        try:
+            path = Path(finding.file)
+            if not path.is_absolute():
+                path = self.workspace / path
+            path = path.resolve()
+            if self.workspace not in path.parents and path != self.workspace:
+                return "(the claimed file sits outside the workspace)"
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return f"(could not open {finding.file}; use the tools to locate it)"
+
+        centre = max(1, finding.line or 1)
+        start = max(1, centre - span // 2)
+        end = min(len(lines), start + span)
+        width = len(str(end))
+        body = "\n".join(
+            f"{i:>{width}}  {lines[i - 1]}" for i in range(start, end + 1)
+        )
+        return (f"SOURCE, {path.name} lines {start} to {end} of {len(lines)}:\n"
+                f"{body}\n")
+
+    def dedupe(self, findings: list[Finding]) -> list[Finding]:
+        """Collapse the same defect found by more than one hunter.
+
+        Hunters work blind to each other, which is what stops them converging
+        on one easy finding and reporting nothing else. The cost of that is
+        real duplicates: two lanes reading the same file both notice the same
+        floor division, and without this the report carries it twice and three
+        extra verifiers are paid to judge a claim already being judged.
+
+        Same file and within three lines is the test. Deliberately tight,
+        because two genuinely different defects can sit close together and
+        merging those would hide one.
+        """
+        kept: list[Finding] = []
+        for finding in findings:
+            twin = next(
+                (k for k in kept
+                 if Path(k.file).name.lower() == Path(finding.file).name.lower()
+                 and abs(k.line - finding.line) <= 3),
+                None,
+            )
+            if twin is None:
+                kept.append(finding)
+                continue
+            # Keep the fuller account of the two, since one hunter usually
+            # explains the failure better than the other.
+            if len(finding.failure_scenario) > len(twin.failure_scenario):
+                twin.failure_scenario = finding.failure_scenario
+            if len(finding.evidence) > len(twin.evidence):
+                twin.evidence = finding.evidence
+            twin.duplicates += 1
+            self.ledger.append("finding_merged", into=twin.id, dropped=finding.id,
+                               file=finding.file, line=finding.line)
+            self.emit("finding_merged", into=twin.id, dropped=finding.id,
+                      title=finding.title)
+        if len(kept) != len(findings):
+            self.emit("deduped", before=len(findings), after=len(kept))
+        return kept
 
     def verify(self, findings: list[Finding]) -> None:
         """Every finding, several independent attempts to destroy it."""
@@ -376,7 +564,10 @@ class Orchestrator:
                 f"  title: {finding.title}\n  summary: {finding.summary}\n"
                 f"  claimed failure: {finding.failure_scenario}\n"
                 f"  quoted evidence: {finding.evidence}\n\n"
-                f"Read the code and decide. Default to refuted."
+                f"{self._source_around(finding)}\n"
+                f"Check the claim against the code. Widen your reading with the "
+                f"tools if the answer depends on something outside this window, "
+                f"such as a caller or a validator upstream. Default to refuted."
             )
             answer = self._agent(
                 agent_id, VERIFIER_SYSTEM.format(manual=TOOL_MANUAL),
@@ -404,7 +595,16 @@ class Orchestrator:
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             futures = [pool.submit(one_verdict, f, n) for f, n in jobs]
             for future in as_completed(futures):
-                future.result()
+                # One worker throwing must not discard what the others found.
+                # Left unhandled, result() re-raises here and the entire phase
+                # is lost along with every finding already in hand, which is
+                # the most expensive possible way to fail.
+                try:
+                    future.result()
+                except Exception as exc:  # noqa: BLE001
+                    self.emit("worker_failed", reason=f"{type(exc).__name__}: {exc}"[:200])
+                    self.ledger.append("worker_failed",
+                                       reason=f"{type(exc).__name__}: {exc}"[:300])
 
         for finding in findings:
             finding.survived = finding.survivals >= SURVIVAL_THRESHOLD
@@ -435,10 +635,15 @@ class Orchestrator:
                   ceiling=self.budget.ceiling_usd)
 
         findings: list[Finding] = []
+        # Bound before the try, because the report below reads it. Assigned
+        # only inside, a planner that raises on the budget leaves it unbound
+        # and the run dies with UnboundLocalError while building the very
+        # report that was meant to explain the failure.
+        lanes: list[dict] = []
         try:
             lanes = self.plan(task)
             if lanes:
-                findings = self.hunt(task, lanes)
+                findings = self.dedupe(self.hunt(task, lanes))
                 if findings:
                     self.verify(findings)
             else:
@@ -453,7 +658,7 @@ class Orchestrator:
         survived.sort(key=lambda f: (rank.get(f.severity, 1), -f.survivals))
 
         report = Report(
-            run_id=run_id, task=task, lanes=[l["name"] for l in lanes] if lanes else [],
+            run_id=run_id, task=task, lanes=[l["name"] for l in lanes],
             raised=len(findings), survived=len(survived),
             findings=[asdict(f) for f in survived],
             spend_usd=round(self.budget.spent_usd, 5), calls=self.budget.calls,

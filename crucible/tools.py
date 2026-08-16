@@ -19,6 +19,7 @@ is a budget like any other.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import threading
 import time
@@ -31,6 +32,19 @@ from .policy import Policy
 MAX_CHARS = 24_000
 MAX_MATCHES = 60
 TEST_TIMEOUT_SECONDS = 120
+SEARCH_TIMEOUT_SECONDS = 10
+SEARCH_LINE_LIMIT = 240
+
+# A group that is itself quantified and contains a quantifier: (a+)+, (a*)*,
+# (.*)+ and friends. This is the shape that makes backtracking exponential in
+# the length of the subject, which is why capping the line length does not
+# save you. At 240 characters `(a+)+b` would still not finish this century.
+#
+# A heuristic, and worth being honest that it is one: it recognises the common
+# constructions rather than proving anything about the language. The line cap
+# and the deadline sit behind it for the cases it misses, and the real fix if
+# this ever mattered commercially is a non-backtracking engine.
+NESTED_QUANTIFIER = re.compile(r"\([^)]*[*+][^)]*\)\s*[*+]|\([^)]*[*+][^)]*\)\s*\{\d")
 
 
 @dataclass(frozen=True)
@@ -214,18 +228,36 @@ class Toolbox:
         return "\n".join(rows) if rows else "(no files)"
 
     def _do_search(self, args: dict) -> str:
-        """Literal or regex search across the workspace, with line numbers."""
-        import re
+        """Regex search across the workspace, bounded in every direction.
 
+        The pattern comes from a language model, so it is untrusted input to a
+        backtracking engine. Python's `re` offers no timeout, and a nested
+        quantifier against a long line takes exponential time, which on a
+        shared demo is a denial of service that needs no malice to trigger.
+
+        Three bounds, since none alone is enough. The pattern is length-capped.
+        Each line is truncated before matching, which is what actually caps the
+        exponent, because backtracking blows up in the length of the subject.
+        And a deadline is checked between lines, which catches the accumulation
+        of many merely-slow matches that no single check would notice.
+        """
         root = Path(args["path"]).resolve()
         pattern = str(args.get("pattern", ""))
         if not pattern:
             raise ValueError("search needs a pattern")
+        if len(pattern) > 400:
+            raise ValueError("pattern is too long")
+        if NESTED_QUANTIFIER.search(pattern):
+            raise ValueError(
+                "pattern nests one quantifier inside another, which takes "
+                "exponential time to fail. Rewrite it without the nesting."
+            )
         try:
             rx = re.compile(pattern)
         except re.error as exc:
             raise ValueError(f"bad pattern: {exc}") from exc
 
+        deadline = time.monotonic() + SEARCH_TIMEOUT_SECONDS
         hits: list[str] = []
         targets = [root] if root.is_file() else sorted(root.rglob("*.py"))
         for file in targets:
@@ -238,7 +270,11 @@ class Toolbox:
             except OSError:
                 continue
             for number, line in enumerate(text.splitlines(), 1):
-                if rx.search(line):
+                if time.monotonic() > deadline:
+                    hits.append(f"[... search stopped after "
+                                f"{SEARCH_TIMEOUT_SECONDS}s ...]")
+                    return "\n".join(hits) if hits else "(search timed out)"
+                if rx.search(line[:SEARCH_LINE_LIMIT]):
                     rel = file.relative_to(root) if root.is_dir() else file.name
                     hits.append(f"{rel}:{number}: {line.strip()[:200]}")
                     if len(hits) >= MAX_MATCHES:
