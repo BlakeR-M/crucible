@@ -1,374 +1,287 @@
-/* Crucible — a certificate of examination that fills itself in.
+/* Crucible — the run, as a branching conversation.
  *
- * The register is a test report, not a judgment. That distinction is the
- * whole reason this looks the way it does: a certificate claims exactly what
- * this system does, which is that specimens were examined and most of them
- * failed, whereas styling model output as a court judgment would borrow an
- * authority it has not got. This audience is trained to notice the
- * difference.
+ * The orchestration is the thing worth watching, so it gets the page. A
+ * planner splits the work, examiners fan out and read, and every claim one of
+ * them raises opens its own sub-thread of three verifiers whose job is to
+ * refute it. Indentation carries the branching: you can see the structure grow
+ * without anyone explaining it.
  *
- * The form exists before the run does. At rest the page is a blank
- * certificate with every heading printed and its slots holding rules. Running
- * it fills the form in rather than swapping one screen for another.
+ * An earlier build put the finished certificate first and squeezed all of this
+ * into an eleven-pixel strip along the bottom. That was backwards. The
+ * certificate is the receipt; the argument is the product.
  *
- * Red appears where something was struck out or refused for want of
- * authority, and nowhere else. There is no green for success, because a
- * finding that survives is set type, which is what survival looks like on
- * paper.
- *
- * The machinery is apparatus: hunters, their tool calls and their refusals sit
- * below a footnote rule in note-size type, and the whole band collapses to one
- * line when the run ends. What remains is the certificate alone.
+ * Red means one thing: refuted, or refused for want of authority. There is no
+ * green for success, because a claim that survives is set in plain ink, which
+ * is what surviving looks like.
  */
 
 :root {
   color-scheme: light;
 
-  /* Two inks on paper. Everything else is derived from them. */
-  --paper:       #FBFAF7;   /* page ground                                     */
-  --paper-leaf:  #F3F1EA;   /* the colophon block at the foot, tinted stock    */
-  --paper-wash:  #F1EDE1;   /* the one finding currently under adjudication    */
-  --ink:         #14130E;   /* 17.8:1 on paper                                 */
-  --ink-muted:   #55524A;   /*  7.5:1 on paper                                 */
-  --ink-struck:  #6E6A60;   /*  5.2:1 — struck body stays readable, that is the point */
-  --rubric:      #8C1515;   /*  9.0:1 — struck or refused. Nothing else.       */
-  --rule-hair:   #C9C4B6;   /* decorative separation only, never carries state */
-  --rule-strong: #8F897A;   /*  3.3:1 — any rule that means something          */
+  --paper:       #FBFAF7;
+  --paper-leaf:  #F3F1EA;
+  --paper-wash:  #F4F1E8;
+  --ink:         #14130E;   /* 17.8:1 on paper */
+  --ink-muted:   #55524A;   /*  7.5:1 */
+  --ink-faint:   #7C7870;   /*  4.6:1 — machine transcript only */
+  --ink-struck:  #6E6A60;   /*  5.2:1 — refuted text stays readable */
+  --rubric:      #8C1515;   /*  9.0:1 — refuted or refused. Nothing else. */
+  --rule-hair:   #DAD5C7;
+  --rule:        #C0BBAC;
+  --rule-strong: #8F897A;
 
-  /* Sitka ships with Windows and carries six optical sizes under separate
-     family names that all map into one variable file, so a real display cut
-     and a real text cut cost nothing and load nothing. macOS falls to New
-     York and Iowan, Linux to Liberation. No webfont, no CSP problem. */
+  /* Sitka ships with Windows and carries six optical cuts under separate
+     family names that all map into one variable file, so a real display face
+     and a real text face cost nothing and load nothing. */
   --face-display: "Sitka Display", "Sitka Heading", ui-serif, "Iowan Old Style",
                   Charter, Cambria, "Palatino Linotype", Georgia, serif;
   --face-text: "Sitka Text", ui-serif, "Iowan Old Style", Charter,
-               "Bitstream Charter", Cambria, "Palatino Linotype", Palatino,
-               Georgia, "Liberation Serif", serif;
+               "Bitstream Charter", Cambria, "Palatino Linotype", Georgia,
+               "Liberation Serif", serif;
   --face-mono: "Cascadia Mono", ui-monospace, SFMono-Regular, "SF Mono",
                Consolas, "DejaVu Sans Mono", monospace;
 
-  /* Five sizes. There is no sixth. */
-  --t-title: 1.75rem;    /* 28px  the matter under adjudication */
-  --t-body:  1.1875rem;  /* 19px  headnote, findings, lanes     */
-  --t-sub:   0.9375rem;  /* 15px  citations, verdicts           */
-  --t-marg:  0.8125rem;  /* 13px  marginalia, section heads     */
-  --t-note:  0.6875rem;  /* 11px  apparatus, hashes, timestamps */
+  --t-title: 1.75rem;    /* 28 */
+  --t-body:  1.0625rem;  /* 17 */
+  --t-sub:   0.9375rem;  /* 15 */
+  --t-marg:  0.8125rem;  /* 13 */
+  --t-note:  0.6875rem;  /* 11 */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-
 html { background: var(--paper); }
-
 body {
-  background: var(--paper);
-  color: var(--ink);
-  font-family: var(--face-text);
-  font-size: var(--t-body);
-  line-height: 1.62;
+  background: var(--paper); color: var(--ink);
+  font-family: var(--face-text); font-size: var(--t-body); line-height: 1.55;
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  padding-bottom: 232px;   /* clears the apparatus band */
-  transition: padding-bottom .3s ease;
+  padding-bottom: 46px;
 }
-body.settled { padding-bottom: 64px; }
-
-/* Machine truth: hashes, paths, counts. Lining tabular figures, because a
-   number whose digits change width while it ticks is the loudest tell there
-   is. Sitka's default figures are lining already; this makes it explicit. */
-.mono {
-  font-family: var(--face-mono);
-  font-size: .9em;
-  font-variant-numeric: tabular-nums lining-nums;
-  font-feature-settings: "tnum" 1, "lnum" 1;
-}
+.mono { font-family: var(--face-mono); font-size: .88em;
+        font-variant-numeric: tabular-nums lining-nums; }
 .fig { font-variant-numeric: tabular-nums lining-nums; }
-
 a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
-a:hover { text-decoration-thickness: 2px; }
-::selection { background: var(--paper-wash); color: var(--ink); }
+::selection { background: var(--paper-wash); }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+::-webkit-scrollbar { width: 9px; }
+::-webkit-scrollbar-thumb { background: var(--rule); }
 
-/* ------------------------------------------------------------ the sheet */
+/* ----------------------------------------------------------------- head */
 
-.sheet {
-  width: 900px;
-  max-width: calc(100vw - 48px);
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: 148px 32px minmax(0, 640px);
-  align-items: start;
+.head {
+  position: sticky; top: 0; z-index: 5; background: var(--paper);
+  border-bottom: 1px solid var(--rule);
 }
-.marg  { grid-column: 1; text-align: right; }
-.meas  { grid-column: 3; }
-.full  { grid-column: 1 / -1; }
-
-/* Specimens are laid into the page's own grid rather than into a nested one.
-   A second 148/32/640 grid inside the 640px measure would push its marginal
-   column off the measure entirely; display:contents lets each specimen's
-   disposition sit in the real margin beside its own text. */
-#findings, .spec { display: contents; }
-
-/* --------------------------------------------------------- running head */
-
-.runhead {
-  position: sticky; top: 0; z-index: 5;
-  background: var(--paper);
-  border-bottom: 1px solid var(--rule-hair);
+.head .in {
+  width: 1000px; max-width: calc(100vw - 40px); margin: 0 auto;
+  height: 46px; display: flex; align-items: baseline; gap: 16px;
 }
-.runhead .inner {
-  width: 900px; max-width: calc(100vw - 48px); margin: 0 auto;
-  height: 34px; display: flex; align-items: center; gap: 16px;
-  font-size: var(--t-marg); color: var(--ink-muted);
+.head .wm {
+  font-family: var(--face-display); font-size: var(--t-sub);
+  font-style: italic; color: var(--ink);
 }
-.runhead .cite { letter-spacing: .04em; }
-.runhead .tally { margin-left: auto; }
-.runhead .tally b { font-weight: 400; color: var(--ink); }
-.runhead .tally .struck { color: var(--rubric); }
+.head .id { font-size: var(--t-marg); color: var(--ink-faint); }
+.head .phase { font-size: var(--t-marg); color: var(--ink-muted); }
+.head .tally { margin-left: auto; font-size: var(--t-marg); color: var(--ink-muted); }
+.head .tally b { font-weight: 400; color: var(--ink); }
+.head .tally .out { color: var(--rubric); }
 
-/* ------------------------------------------------------------- masthead */
+/* ----------------------------------------------------------------- page */
 
-.matter { margin-top: 46px; }
-.matter .inmatter {
-  font-size: var(--t-note); color: var(--ink-muted);
-  letter-spacing: .1em; text-transform: uppercase;
-  margin-bottom: 8px;
+.page { width: 1000px; max-width: calc(100vw - 40px); margin: 0 auto; padding: 26px 0 40px; }
+
+.opening { margin-bottom: 26px; }
+.opening .kicker {
+  font-size: var(--t-note); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-faint); margin-bottom: 6px;
 }
-.matter h1 {
-  font-family: var(--face-display);
-  font-size: var(--t-title); font-weight: 400; font-style: italic;
-  line-height: 1.18; letter-spacing: -.01em;
+.opening h1 {
+  font-family: var(--face-display); font-size: var(--t-title);
+  font-weight: 400; font-style: italic; line-height: 1.2;
 }
-.matter .adjudicated {
-  font-size: var(--t-marg); color: var(--ink-muted); margin-top: 10px;
-}
-/* Head rule: 2px over 1px, 3px apart. A judgment's double rule. */
-.headrule { grid-column: 3; margin: 18px 0 26px; }
-.headrule::before,
-.headrule::after { content: ""; display: block; background: var(--ink); }
-.headrule::before { height: 2px; }
-.headrule::after  { height: 1px; margin-top: 3px; }
+.opening p { font-size: var(--t-sub); color: var(--ink-muted); margin-top: 8px;
+             max-width: 62ch; }
 
-/* --------------------------------------------------------------- blocks */
-
-.sec { font-size: var(--t-marg); color: var(--ink-muted); line-height: 1.45;
-       padding-top: .28em; }
-.block { margin-bottom: 30px; }
-
-.headnote { min-height: 3.2em; }
-.headnote em { font-style: italic; }
-
-/* Empty slots on the blank form. The document exists before the run does,
-   so a slot that has not been filled shows a rule rather than nothing. */
-.slot { display: block; height: 1px; background: var(--rule-hair); margin: .62em 0; }
-.slot.short { width: 42%; }
-.slot.mid   { width: 74%; }
-
-ol.lanes { list-style: none; }
-ol.lanes li {
-  display: flex; gap: 12px; align-items: baseline;
-  padding: 1px 0;
-}
-ol.lanes .n { color: var(--ink-muted); width: 1.6em; flex: 0 0 auto; }
-ol.lanes .who {
-  margin-left: auto; font-size: var(--t-note); color: var(--ink-muted);
-  letter-spacing: .09em; text-transform: uppercase; flex: 0 0 auto;
-}
-
-/* ------------------------------------------------------------- findings */
-
-.finding {
-  position: relative;
-  padding: 14px 0 16px 14px;
-  border-top: 1px solid var(--rule-hair);
-  transition: background .2s ease;
-}
-.finding:first-child { border-top: 0; }
-.finding .num {
-  position: absolute; left: -46px; top: 14px; width: 34px;
-  text-align: right; color: var(--ink-muted); font-size: var(--t-sub);
-}
-.finding h2 {
-  font-size: var(--t-body); font-weight: 700; line-height: 1.34;
-  display: inline; /* so the strike rule can span the real text width */
-}
-.finding .cite {
-  font-size: var(--t-sub); color: var(--ink-muted); margin-top: 4px;
-}
-.finding .cite .sev { font-style: italic; }
-.finding .sum { font-size: var(--t-body); margin-top: 8px; }
-.finding .fail {
-  font-size: var(--t-sub); color: var(--ink-muted); margin-top: 8px;
-  padding-left: 14px; border-left: 1px solid var(--rule-hair);
-}
-
-/* The change bar: present while a finding is being adjudicated, permanent
-   once it has been struck. It does not pulse, breathe or glow. It is either
-   there or it is not. */
-.finding::before {
-  content: ""; position: absolute; left: 0; top: 14px; bottom: 16px; width: 2px;
-  background: var(--rubric); transform: scaleY(0); transform-origin: top;
-  transition: transform .18s ease;
-}
-.finding.trying::before { transform: scaleY(1); }
-.finding.trying { background: var(--paper-wash); }
-.finding.struck::before { transform: scaleY(1); }
-
-/* The strike. The one real movement on the page. */
-.finding h2 { background-image: linear-gradient(var(--rubric), var(--rubric));
-              background-repeat: no-repeat;
-              background-size: 0% 1.5px;
-              background-position: 0 62%; }
-.finding.struck h2 { background-size: 100% 1.5px; transition: background-size .34s ease-out; }
-.finding.struck .sum,
-.finding.struck .cite { color: var(--ink-struck); }
-.finding.struck h2 { color: var(--ink-struck); }
-
-.verdicts { margin-top: 9px; font-size: var(--t-sub); color: var(--ink-muted); }
-.verdicts .v { padding: 1px 0; }
-.verdicts .v .r { font-style: italic; }
-/* The verdict that actually killed it is the only one set in black roman,
-   so the eye lands on the reason rather than on the tally. */
-.verdicts .v.killer { color: var(--ink); }
-.verdicts .v.killer .r { font-style: normal; }
-
-.disposition {
-  font-size: var(--t-marg); line-height: 1.4; padding-top: 1.05em;
-}
-.disposition .word { display: block; }
-.disposition.struck .word { color: var(--rubric); }
-.disposition .count { color: var(--ink-muted); }
-
-/* ------------------------------------------------------------- colophon */
-
-.colophon {
-  background: var(--paper-leaf);
-  padding: 16px 18px; margin: 34px 0 12px;
-  /* Set at 13 rather than 11 so the mono inside it, which carries the 0.9em
-     optical correction against the serif, still lands above 11px. Consolas at
-     9.9px is not a hash anyone can check. */
-  font-size: var(--t-marg); color: var(--ink-muted); line-height: 1.75;
-}
-.colophon .row { display: flex; gap: 18px; }
-.colophon .row span:last-child { margin-left: auto; }
-.colophon .root { color: var(--ink); letter-spacing: .06em; }
-.colophon a { color: var(--ink); }
-
-/* ------------------------------------------------------------ apparatus */
-/* Everything the machine is doing, kept where apparatus belongs: below a
-   footnote rule, in note-size type. At the end of a run it collapses to one
-   line, and the judgment above is left alone. */
-
-.apparatus {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 4;
-  background: var(--paper);
-  border-top: 1px solid var(--rule-strong);
-  height: 208px;
-  transition: height .34s ease;
-}
-body.settled .apparatus { height: 40px; }
-.apparatus .inner {
-  width: 900px; max-width: calc(100vw - 48px); margin: 0 auto;
-  height: 100%; display: flex; flex-direction: column;
-  padding: 7px 0 9px;
-}
-.apparatus .foot {
-  display: flex; gap: 20px; align-items: baseline;
-  font-size: var(--t-note); color: var(--ink-muted);
-  padding-bottom: 6px;
-}
-.apparatus .foot .right { margin-left: auto; display: flex; gap: 18px; }
-.apparatus .foot .dagger { color: var(--rubric); }
-
-.hunters {
-  flex: 1; min-height: 0; display: grid;
-  /* However many lanes the planner opened. Fixed at five, a six-lane run
-     wraps to a second row and overflows the band. */
-  grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0 18px;
-  border-top: 1px solid var(--rule-hair); padding-top: 6px;
-}
-body.settled .hunters { display: none; }
-.hunter { min-width: 0; display: flex; flex-direction: column; }
-.hunter .h {
-  font-size: var(--t-note); color: var(--ink-muted);
-  letter-spacing: .09em; text-transform: uppercase;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  padding-bottom: 3px;
-}
-.hunter .h.done { color: var(--ink); }
-.hunter .tape {
-  flex: 1; min-height: 0; overflow: hidden;
-  font-family: var(--face-mono); font-size: var(--t-note); line-height: 1.55;
-  color: var(--ink-muted);
-}
-.hunter .tape div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hunter .tape .no { color: var(--rubric); }
-
-/* ---------------------------------------------------------------- forms */
-
-.choose { display: grid; gap: 0; }
+.choose { margin-top: 20px; max-width: 62ch; }
 .choose label {
-  display: flex; gap: 12px; align-items: baseline; cursor: pointer;
-  padding: 5px 0; border-bottom: 1px solid var(--rule-hair);
+  display: flex; gap: 11px; align-items: baseline; cursor: pointer;
+  padding: 6px 0; border-bottom: 1px solid var(--rule-hair);
 }
 .choose label:first-child { border-top: 1px solid var(--rule-hair); }
 .choose input { position: absolute; opacity: 0; pointer-events: none; }
-.choose .mark { width: 1.6em; flex: 0 0 auto; color: var(--ink-muted); }
-.choose label.on .mark { color: var(--rubric); }
+.choose .m { width: 1.5em; flex: 0 0 auto; color: var(--ink-faint); }
+.choose label.on .m { color: var(--rubric); }
 .choose label.on .t { text-decoration: underline; text-underline-offset: 3px; }
-.choose .t { flex: 1; }
 .choose .d { font-size: var(--t-sub); color: var(--ink-muted); }
 
 button.act {
-  margin-top: 20px; padding: 7px 20px;
-  font-family: var(--face-text); font-size: var(--t-sub);
-  background: var(--paper); color: var(--ink);
-  border: 1px solid var(--ink); border-radius: 0; cursor: pointer;
+  margin-top: 18px; padding: 8px 22px; font-family: var(--face-text);
+  font-size: var(--t-sub); background: var(--paper); color: var(--ink);
+  border: 1px solid var(--ink); cursor: pointer;
   transition: background .12s ease, color .12s ease;
 }
 button.act:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
-button.act:disabled { border-color: var(--rule-strong); color: var(--ink-muted); cursor: default; }
+button.act:disabled { border-color: var(--rule); color: var(--ink-faint); cursor: default; }
 
-.notice {
-  border-left: 2px solid var(--rubric); padding-left: 12px;
-  color: var(--rubric); font-size: var(--t-sub); margin: 14px 0;
+.notice { border-left: 2px solid var(--rubric); padding-left: 12px;
+          color: var(--rubric); font-size: var(--t-sub); margin: 14px 0; }
+
+/* ----------------------------------------------------------- the thread */
+/* Indentation carries the branching. The rules are borders rather than box
+   characters so they stay hairline-crisp at any zoom and never wrap. */
+
+.node { position: relative; }
+.node > .kids {
+  margin-left: 13px; padding-left: 21px;
+  border-left: 1px solid var(--rule-hair);
 }
+/* The elbow into each child. */
+.node > .kids > .node::before {
+  content: ""; position: absolute; left: -21px; top: .82em;
+  width: 14px; height: 1px; background: var(--rule-hair);
+}
+
+.who {
+  display: flex; align-items: baseline; gap: 9px;
+  padding-top: 12px;
+}
+.who .dot {
+  width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%;
+  background: var(--rule-strong); margin-top: .42em;
+}
+.who.live .dot { background: var(--ink); }
+.who.done .dot { background: var(--paper); box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.who .name {
+  font-family: var(--face-display); font-style: italic; font-size: var(--t-body);
+}
+.who .role { font-size: var(--t-marg); color: var(--ink-muted); }
+.who .meta {
+  margin-left: auto; font-size: var(--t-note); color: var(--ink-faint);
+  font-variant-numeric: tabular-nums lining-nums; white-space: nowrap;
+}
+
+.says { font-size: var(--t-sub); color: var(--ink-muted); margin: 3px 0 0 16px;
+        max-width: 78ch; }
+
+/* Machine transcript: what an agent actually did, as opposed to what it said. */
+.acts { margin: 4px 0 2px 16px; }
+.acts .a {
+  font-family: var(--face-mono); font-size: var(--t-marg);
+  color: var(--ink-faint); line-height: 1.62;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 82ch;
+}
+.acts .a b { font-weight: 400; color: var(--ink-muted); }
+.acts .a.no { color: var(--rubric); }
+.acts .a.no b { color: var(--rubric); }
+
+/* -------------------------------------------------------------- a claim */
+
+.claim {
+  margin: 9px 0 2px 16px; padding: 10px 14px;
+  background: var(--paper-leaf); border-left: 2px solid var(--rule-strong);
+  max-width: 80ch;
+}
+.claim.trying { border-left-color: var(--ink); }
+.claim.stands { border-left-color: var(--ink); background: var(--paper-wash); }
+.claim.out    { border-left-color: var(--rubric); }
+
+.claim .t { font-size: var(--t-body); font-weight: 700; line-height: 1.35;
+            display: inline; background-image: linear-gradient(var(--rubric), var(--rubric));
+            background-repeat: no-repeat; background-size: 0% 1.5px;
+            background-position: 0 64%; }
+.claim.out .t { background-size: 100% 1.5px; transition: background-size .34s ease-out;
+                color: var(--ink-struck); }
+.claim .where { font-family: var(--face-mono); font-size: var(--t-marg);
+                color: var(--ink-muted); margin-top: 4px; }
+.claim .sum { font-size: var(--t-sub); margin-top: 6px; }
+.claim.out .sum, .claim.out .where { color: var(--ink-struck); }
+.claim .repro {
+  font-family: var(--face-mono); font-size: var(--t-marg); line-height: 1.6;
+  color: var(--ink-muted); margin-top: 8px; padding-left: 11px;
+  border-left: 1px solid var(--rule);
+}
+
+.verdict { display: flex; gap: 9px; align-items: baseline; padding-top: 7px; }
+.verdict .n { font-size: var(--t-marg); color: var(--ink-faint); width: 2.4em;
+              flex: 0 0 auto; }
+.verdict .r { font-size: var(--t-sub); color: var(--ink-muted); max-width: 74ch; }
+/* The verifier that actually killed it is the only one in plain ink, so the
+   eye lands on the reason rather than on the tally. */
+.verdict.kills .r { color: var(--ink); }
+.verdict.kills .n { color: var(--rubric); }
+
+.ruling {
+  margin: 8px 0 4px 16px; font-size: var(--t-sub);
+  display: flex; gap: 10px; align-items: baseline;
+}
+.ruling .w { font-family: var(--face-display); font-style: italic; }
+.ruling.out .w { color: var(--rubric); }
+.ruling .c { font-size: var(--t-marg); color: var(--ink-faint); }
+
+/* -------------------------------------------------------------- closing */
+
+.closing {
+  margin-top: 34px; padding: 18px 20px; background: var(--paper-leaf);
+  max-width: 80ch;
+}
+.closing h2 { font-family: var(--face-display); font-style: italic;
+              font-size: var(--t-body); font-weight: 400; margin-bottom: 8px; }
+.closing p { font-size: var(--t-sub); }
+.closing em { font-style: italic; }
+.closing .rows { margin-top: 12px; padding-top: 10px;
+                 border-top: 1px solid var(--rule-hair);
+                 font-size: var(--t-marg); color: var(--ink-muted); }
+.closing .rows div { display: flex; gap: 16px; padding: 1px 0; }
+.closing .rows span:last-child { margin-left: auto; }
+
+/* --------------------------------------------------------------- footer */
+
+.foot {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 4;
+  background: var(--paper); border-top: 1px solid var(--rule);
+}
+.foot .in {
+  width: 1000px; max-width: calc(100vw - 40px); margin: 0 auto;
+  height: 45px; display: flex; align-items: center; gap: 18px;
+  font-size: var(--t-marg); color: var(--ink-muted);
+}
+.foot .right { margin-left: auto; display: flex; gap: 18px; }
+.foot .dag { color: var(--rubric); }
 
 /* --------------------------------------------------------------- motion */
 
-.arrives { animation: ink .14s ease-out both; }
+.in-ink { animation: ink .16s ease-out both; }
 @keyframes ink { from { opacity: 0; } }
-
 @media (prefers-reduced-motion: reduce) {
-  * { animation-duration: .01ms !important; transition-duration: .08s !important; }
-  .finding.struck h2 { transition: none; }
+  * { animation-duration: .01ms !important; }
+  .claim.out .t { transition: none; }
 }
 
 /* ------------------------------------------------------------ responsive */
 
-@media (max-width: 940px) {
-  .sheet { grid-template-columns: 1fr; }
-  .marg { grid-column: 1; text-align: left; margin-bottom: 4px; }
-  .meas, .full { grid-column: 1; }
-  .headrule { grid-column: 1; }
-  .finding .num { position: static; display: inline-block; width: auto;
-                  margin-right: .5em; }
-  .hunters { grid-auto-flow: row; grid-template-columns: repeat(2, 1fr); }
-  .hunter:nth-child(n+3) { display: none; }
-}
-@media (max-width: 620px) {
-  :root { --t-title: 1.5rem; --t-body: 1.0625rem; --t-sub: .875rem; }
-  body { padding-bottom: 168px; }
-  .apparatus { height: 148px; }
-  .hunters { grid-auto-flow: row; grid-template-columns: 1fr; }
-  .hunter:nth-child(n+2) { display: none; }
+@media (max-width: 720px) {
+  :root { --t-title: 1.45rem; --t-body: 1rem; --t-sub: .875rem; }
+  .node > .kids { margin-left: 7px; padding-left: 13px; }
+  .node > .kids > .node::before { left: -13px; width: 8px; }
+  .who .meta { display: none; }
+  .foot .in { gap: 12px; font-size: var(--t-note); }
 }
 
-/* ----------------------------------------------------------------- print */
-/* A finished run should print as the judgment, with no apparatus in frame. */
+/* ----------------------------------------------------------------- login */
 
-@media print {
-  body { padding-bottom: 0; }
-  .apparatus, .runhead, .choose, button.act { display: none; }
-  .sheet { width: auto; }
-  .finding { break-inside: avoid; }
-}
+.gate { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.gate form { width: 100%; max-width: 380px; }
+.gate .kicker { font-size: var(--t-note); letter-spacing: .1em;
+                text-transform: uppercase; color: var(--ink-faint); }
+.gate h1 { font-family: var(--face-display); font-size: var(--t-title);
+           font-weight: 400; font-style: italic; margin: 6px 0 4px; }
+.gate .sub { font-size: var(--t-sub); color: var(--ink-muted); }
+.gate .field { margin-top: 18px; }
+.gate label { display: block; font-size: var(--t-marg); color: var(--ink-muted);
+              margin-bottom: 4px; }
+.gate input { width: 100%; padding: 6px 0; background: transparent; border: 0;
+              border-bottom: 1px solid var(--rule-strong);
+              font-family: var(--face-mono); font-size: var(--t-sub); color: var(--ink); }
+.gate input:focus { outline: none; border-bottom-color: var(--ink); border-bottom-width: 2px; }
+.gate .fine { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--rule-hair);
+              font-size: var(--t-note); color: var(--ink-muted); line-height: 1.7; }

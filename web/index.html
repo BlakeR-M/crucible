@@ -4,95 +4,54 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Crucible — Certificate of Examination</title>
+<title>Crucible</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23FBFAF7'/><path d='M2.5 8.2 L13.5 8.2' stroke='%238C1515' stroke-width='1.4'/></svg>">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 
-<div class="runhead">
-  <div class="inner">
-    <span class="cite mono" id="report">CRUCIBLE / EX / —</span>
-    <span class="tally" id="tally">no examination in progress</span>
+<header class="head">
+  <div class="in">
+    <span class="wm">Crucible</span>
+    <span class="id mono" id="runid"></span>
+    <span class="phase" id="phase"></span>
+    <span class="tally" id="tally"></span>
   </div>
-</div>
+</header>
 
-<main class="sheet">
+<main class="page">
 
-  <!-- The form is printed before anything fills it. -->
-  <header class="matter meas block">
-    <div class="inmatter">Certificate of examination</div>
-    <h1 id="subject">A codebase, not yet nominated</h1>
-    <div class="adjudicated" id="issued">Unissued</div>
-  </header>
-  <div class="headrule"></div>
-
-  <div class="marg sec">Nomination</div>
-  <section class="meas block" id="nominate">
+  <section class="opening" id="opening">
+    <div class="kicker">Adversarial code review</div>
+    <h1 id="subject">Choose what to put under attack</h1>
+    <p>
+      A planner splits the work. Examiners fan out and read the code. Every
+      claim one of them raises is then handed to three verifiers whose
+      instruction is to destroy it, and only claims that survive a majority are
+      reported. Nothing here can write to the code it is reviewing.
+    </p>
     <div class="choose" id="choose"></div>
-    <button class="act" id="begin">Begin examination</button>
+    <button class="act" id="begin">Begin</button>
     <div id="notice"></div>
   </section>
 
-  <div class="marg sec">Determination</div>
-  <section class="meas block">
-    <p class="headnote" id="headnote">
-      <span class="slot mid"></span><span class="slot"></span><span class="slot short"></span>
-    </p>
-  </section>
-
-  <div class="marg sec">Method</div>
-  <section class="meas block">
-    <ol class="lanes" id="lanes">
-      <li><span class="n">1.</span><span class="slot mid"></span></li>
-      <li><span class="n">2.</span><span class="slot mid"></span></li>
-      <li><span class="n">3.</span><span class="slot short"></span></li>
-      <li><span class="n">4.</span><span class="slot mid"></span></li>
-    </ol>
-  </section>
-
-  <div class="marg sec">Authority</div>
-  <section class="meas block">
-    <ol class="lanes" id="authority">
-      <li><span class="slot mid"></span></li>
-      <li><span class="slot short"></span></li>
-    </ol>
-  </section>
-
-  <div class="marg sec">Specimens</div>
-  <div id="findings">
-    <p id="nospecimens" class="meas block cite" style="color:var(--ink-muted)">
-      No specimens have been raised. Each one recorded here is then put to three
-      examiners instructed to refute it; those that fail are struck out where
-      they stand and stay in the sequence.
-    </p>
-  </div>
-
-  <section class="full">
-    <div class="colophon" id="colophon">
-      <div class="row"><span>Ledger root</span><span class="root mono" id="root">—</span></div>
-      <div class="row"><span>Entries</span><span class="mono fig" id="entries">—</span></div>
-      <div class="row"><span>Issued</span><span class="mono" id="issuedfoot">—</span></div>
-    </div>
-  </section>
+  <div id="thread"></div>
+  <div id="closing"></div>
 
 </main>
 
-<aside class="apparatus" id="apparatus">
-  <div class="inner">
-    <div class="foot">
-      <span id="state">Awaiting nomination</span>
-      <span class="dagger" id="daggers"></span>
-      <div class="right">
-        <span class="mono fig" id="spend">$0.0000</span>
-        <span class="mono fig" id="calls">0 calls</span>
-        <span class="mono fig" id="tools">0 reads</span>
-        <span class="mono fig" id="clock">0:00</span>
-      </div>
+<footer class="foot">
+  <div class="in">
+    <span id="state">Ready</span>
+    <span class="dag" id="dag"></span>
+    <div class="right">
+      <span class="fig" id="spend">$0.0000</span>
+      <span class="fig" id="calls">0 calls</span>
+      <span class="fig" id="reads">0 reads</span>
+      <span class="fig" id="clock">0:00</span>
     </div>
-    <div class="hunters" id="hunters"></div>
   </div>
-</aside>
+</footer>
 
 <script src="/static/app.js"></script>
 </body>

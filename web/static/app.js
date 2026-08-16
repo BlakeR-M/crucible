@@ -1,13 +1,14 @@
 /* Crucible, client side.
  *
- * The page is a certificate that fills itself in. Every slot exists before the
- * run does, holding a rule, and events replace rules with text. Nothing is
- * created and destroyed as the run proceeds, which is why the document does
- * not jump about while it is being written.
+ * The page is one growing tree. The planner is the root; each examiner is a
+ * branch under it; each claim an examiner raises is a branch under that
+ * examiner; each verifier's verdict is a leaf under the claim. Nothing moves
+ * once it is placed, so the structure of the run is readable at any moment and
+ * still readable afterwards.
  *
- * All state is derived from the event stream. Each event carries its index, so
- * a reconnect that replays the run from the beginning lands in the same place
- * rather than counting everything twice.
+ * All state is derived from the event stream, and every event carries its
+ * index, so a reconnect that replays the run from the beginning lands in the
+ * same place instead of counting everything twice.
  *
  * Text reaches the DOM through textContent only. It is written by language
  * models reading a stranger's code, which is exactly the text that should
@@ -24,21 +25,21 @@ const el = (tag, cls, txt) => {
 
 const S = {
   runId: null, started: 0, timer: null, source: null, seen: -1,
-  hunters: new Map(), specimens: new Map(),
-  raised: 0, stood: 0, struck: 0, refused: 0,
-  calls: 0, tools: 0, spend: 0,
+  agents: new Map(),    // agent id  -> {node, kids, acts, who, meta}
+  claims: new Map(),    // finding id -> {node, kids, box, ruling, seen}
+  raised: 0, stood: 0, out: 0, refused: 0,
+  calls: 0, reads: 0, spend: 0,
 };
 
 const money = (n) => '$' + (n || 0).toFixed(4);
 const short = (p) => !p ? '' : String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
 const ROMAN = ['i', 'ii', 'iii', 'iv', 'v'];
-
-// Quantities read as words in prose and as figures in anything that mutates.
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
                'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen',
                'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
                'nineteen', 'twenty'];
 const say = (n) => (n < WORDS.length ? WORDS[n] : String(n));
+const Say = (n) => { const w = say(n); return w[0].toUpperCase() + w.slice(1); };
 
 function clock() {
   if (!S.started) return;
@@ -46,15 +47,24 @@ function clock() {
   $('clock').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function stamp() {
-  const d = new Date();
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
-                  'August', 'September', 'October', 'November', 'December'];
-  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ` +
-         `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+/* A node is a speaker, what it said, what it did, and its children. */
+function node(parentKids, { name, role, live }) {
+  const n = el('div', 'node in-ink');
+  const who = el('div', 'who' + (live ? ' live' : ''));
+  who.append(el('span', 'dot'));
+  who.append(el('span', 'name', name));
+  if (role) who.append(el('span', 'role', role));
+  const meta = el('span', 'meta', '');
+  who.append(meta);
+  const says = el('p', 'says');
+  const acts = el('div', 'acts');
+  const kids = el('div', 'kids');
+  n.append(who, says, acts, kids);
+  parentKids.append(n);
+  return { n, who, meta, says, acts, kids };
 }
 
-/* ------------------------------------------------------------ nomination */
+/* ------------------------------------------------------------------ start */
 
 async function boot() {
   try {
@@ -74,16 +84,16 @@ async function boot() {
         label.classList.add('on');
         $('subject').textContent = names[task.key] || task.key;
       });
-      const wrap = el('span', 't');
-      wrap.append(el('span', null, names[task.key] || task.key),
-                  el('span', 'd', ' ' + task.label));
-      label.append(input, el('span', 'mark', ROMAN[i] + '.'), wrap);
+      const t = el('span', 't');
+      t.append(el('span', null, names[task.key] || task.key),
+               el('span', 'd', ' — ' + task.label));
+      label.append(input, el('span', 'm', ROMAN[i] + '.'), t);
       $('choose').append(label);
     });
-    $('subject').textContent = names[data.tasks[0].key] || 'A codebase';
+    $('subject').textContent = names[data.tasks[0].key] || 'The whole codebase';
     $('state').textContent =
-      `Awaiting nomination · bounded at ${data.max_concurrent} concurrent ` +
-      `examinations and $${data.ceiling_usd.toFixed(2)} per run`;
+      `Bounded at ${data.max_concurrent} concurrent runs and ` +
+      `$${data.ceiling_usd.toFixed(2)} of model spend per run`;
   } catch (err) {
     notice('The server could not be reached. ' + err.message);
   }
@@ -96,8 +106,7 @@ function notice(text) {
 
 $('begin').addEventListener('click', async () => {
   const picked = document.querySelector('input[name=task]:checked');
-  $('begin').disabled = true;
-  $('begin').textContent = 'Beginning';
+  $('begin').disabled = true; $('begin').textContent = 'Starting';
   $('notice').innerHTML = '';
   try {
     const res = await fetch('/api/run', {
@@ -107,23 +116,22 @@ $('begin').addEventListener('click', async () => {
     if (res.status === 401) { location.href = '/login'; return; }
     const data = await res.json();
     if (!res.ok) {
-      notice(data.error || 'The examination was refused.');
-      $('begin').disabled = false; $('begin').textContent = 'Begin examination';
+      notice(data.error || 'The run was refused.');
+      $('begin').disabled = false; $('begin').textContent = 'Begin';
       return;
     }
-    $('nominate').style.display = 'none';
-    document.querySelector('.marg.sec').style.display = 'none';
-    $('issued').textContent = 'Examined ' + stamp();
+    $('choose').style.display = 'none';
+    $('begin').style.display = 'none';
     S.started = Date.now();
     S.timer = setInterval(clock, 1000);
     listen(data.run_id);
   } catch (err) {
-    notice('The examination could not be started. ' + err.message);
-    $('begin').disabled = false; $('begin').textContent = 'Begin examination';
+    notice('Could not start. ' + err.message);
+    $('begin').disabled = false; $('begin').textContent = 'Begin';
   }
 });
 
-/* ---------------------------------------------------------------- stream */
+/* ----------------------------------------------------------------- stream */
 
 function listen(runId) {
   S.runId = runId;
@@ -131,14 +139,11 @@ function listen(runId) {
   S.source = source;
   source.onmessage = (m) => {
     let e; try { e = JSON.parse(m.data); } catch { return; }
-    if (typeof e.n === 'number') {
-      if (e.n <= S.seen) return;
-      S.seen = e.n;
-    }
+    if (typeof e.n === 'number') { if (e.n <= S.seen) return; S.seen = e.n; }
     handle(e);
   };
   source.onerror = () => {
-    if (source.readyState === EventSource.CLOSED && !document.body.classList.contains('settled')) {
+    if (source.readyState === EventSource.CLOSED && S.started) {
       $('state').textContent = 'Connection closed. Reload to reattach.';
     }
   };
@@ -149,14 +154,14 @@ function handle(e) {
     case 'run_started':     return onStart(e);
     case 'phase':           return onPhase(e);
     case 'lane':            return;
-    case 'agent_started':   return onHunter(e);
+    case 'agent_started':   return onAgent(e);
     case 'agent_thought':   return onThought(e);
     case 'tool':            return onTool(e);
     case 'agent_done':
-    case 'agent_finished':  return onHunterDone(e);
+    case 'agent_finished':  return onAgentDone(e);
     case 'agent_exhausted':
     case 'agent_halted':
-    case 'agent_error':     return onHunterStopped(e);
+    case 'agent_error':     return onAgentStopped(e);
     case 'finding_raised':  return onRaised(e);
     case 'finding_merged':  return onMerged(e);
     case 'verdict':         return onVerdict(e);
@@ -166,244 +171,238 @@ function handle(e) {
   }
 }
 
-/* ---------------------------------------------------------------- filling */
+/* ------------------------------------------------------------------ nodes */
 
 function onStart(e) {
-  $('report').textContent = 'CRUCIBLE / EX / ' + e.run_id.slice(0, 8).toUpperCase();
-  updateTally();
+  $('runid').textContent = e.run_id.slice(0, 8);
+  $('phase').textContent = 'planning';
 
-  const auth = $('authority');
-  auth.innerHTML = '';
+  const root = node($('thread'), { name: 'Planner', role: 'dividing the work', live: true });
+  root.says.textContent = e.task || '';
+  S.agents.set('__planner', root);
+
   const tools = (e.policy && e.policy.tools) || {};
-  Object.keys(tools).forEach(name => {
-    const rule = tools[name];
-    let scope = '';
-    if (rule.commands && rule.commands.length) scope = 'may run ' + rule.commands.join(', ');
-    else if (rule.path_scopes && rule.path_scopes.length) scope = 'within the specimen directory';
-    const li = el('li', 'arrives');
-    li.append(el('span', 'n', ''), el('span', null, name + ' — ' + scope));
-    auth.append(li);
-  });
-  const deny = el('li', 'arrives');
-  const d = el('span', null, 'network — refused entirely');
-  d.style.color = 'var(--rubric)';
-  deny.append(el('span', 'n', ''), d);
-  auth.append(deny);
+  const line = el('div', 'a');
+  line.append(el('b', null, 'authority  '),
+              el('span', null, Object.keys(tools).sort().join(', ') +
+                               ' · network refused'));
+  root.acts.append(line);
+  tally();
 }
 
 function onPhase(e) {
-  const words = {
-    plan: 'Apportioning the examination',
-    hunt: 'Under examination',
-    verify: 'Specimens put to the examiners',
-  };
-  $('state').textContent = words[e.phase] || e.phase;
-  if (e.phase === 'plan') $('lanes').innerHTML = '';
+  const words = { plan: 'planning', hunt: 'reading the code', verify: 'under attack' };
+  $('phase').textContent = words[e.phase] || e.phase;
+  if (e.phase === 'verify') {
+    const p = S.agents.get('__planner');
+    if (p) p.who.classList.remove('live');
+  }
 }
 
-function onHunter(e) {
-  if (e.role === 'verifier') return;
-  if (S.hunters.has(e.agent)) return;
-
-  const li = el('li', 'arrives');
-  li.append(el('span', 'n', S.hunters.size + 1 + '.'));
-  li.append(el('span', null, e.lane || ''));
-  li.append(el('span', 'who', e.agent.replace('hunter-', 'examiner ')));
-  $('lanes').append(li);
-
-  const col = el('div', 'hunter');
-  const head = el('div', 'h', e.agent.replace('hunter-', 'examiner '));
-  const tape = el('div', 'tape');
-  col.append(head, tape);
-  $('hunters').append(col);
-  S.hunters.set(e.agent, { head, tape });
+function onAgent(e) {
+  if (e.role === 'verifier') return;          // verifiers live under their claim
+  if (S.agents.has(e.agent)) return;
+  const planner = S.agents.get('__planner');
+  if (!planner) return;
+  const n = node(planner.kids, {
+    name: 'Examiner ' + e.agent.replace('hunter-', ''),
+    role: e.lane || '', live: true,
+  });
+  S.agents.set(e.agent, n);
 }
 
 function onThought(e) {
   S.calls += 1; S.spend += e.cost || 0;
   $('calls').textContent = S.calls + ' calls';
   $('spend').textContent = money(S.spend);
+  const a = S.agents.get(e.agent);
+  if (a) a.meta.textContent = 'step ' + ((e.step || 0) + 1);
 }
 
 function onTool(e) {
   if (e.refused) {
     S.refused += 1;
-    $('daggers').textContent = '† ' + S.refused + ' refused for want of authority';
+    $('dag').textContent = '† ' + S.refused + ' refused for want of authority';
   } else {
-    S.tools += 1;
-    $('tools').textContent = S.tools + ' reads';
+    S.reads += 1;
+    $('reads').textContent = S.reads + ' reads';
   }
-  const h = S.hunters.get(e.agent);
-  if (!h) return;
-  const line = el('div', e.refused ? 'no' : '');
-  line.textContent = e.refused
-    ? '† ' + (e.reason || '')
-    : e.tool + '  ' + (e.args && (short(e.args.path) || e.args.pattern || e.args.command) || '');
-  h.tape.append(line);
-  while (h.tape.children.length > 12) h.tape.removeChild(h.tape.firstChild);
+  // A verifier's actions belong to the claim it is judging, so they are shown
+  // there rather than in a lane of their own.
+  const owner = S.agents.get(e.agent) || verifierHost(e.agent);
+  if (!owner) return;
+  const line = el('div', 'a in-ink' + (e.refused ? ' no' : ''));
+  line.append(el('b', null, (e.refused ? 'refused' : e.tool) + '  '));
+  line.append(el('span', null, e.refused ? (e.reason || '')
+    : (e.args && (short(e.args.path) || e.args.pattern || e.args.command) || '')));
+  owner.acts.append(line);
+  while (owner.acts.children.length > 40) owner.acts.removeChild(owner.acts.firstChild);
 }
 
-function onHunterDone(e) {
-  const h = S.hunters.get(e.agent);
-  if (h) h.head.classList.add('done');
+function verifierHost(agentId) {
+  // verifier-<findingId>-<n>
+  const m = /^verifier-([0-9a-f]+)-\d+$/.exec(agentId || '');
+  const c = m && S.claims.get(m[1]);
+  return c ? { acts: c.acts } : null;
 }
 
-function onHunterStopped(e) {
-  const h = S.hunters.get(e.agent);
-  if (!h) return;
-  const line = el('div', 'no');
-  line.textContent = '† ' + (e.reason || 'reached its step limit');
-  h.tape.append(line);
+function onAgentDone(e) {
+  const a = S.agents.get(e.agent);
+  if (!a) return;
+  a.who.classList.remove('live'); a.who.classList.add('done');
 }
 
-/* -------------------------------------------------------------- specimens */
+function onAgentStopped(e) {
+  const a = S.agents.get(e.agent);
+  if (!a) return;
+  a.who.classList.remove('live');
+  const line = el('div', 'a no');
+  line.append(el('b', null, 'stopped  '),
+              el('span', null, e.reason || 'reached its step limit'));
+  a.acts.append(line);
+}
+
+/* ----------------------------------------------------------------- claims */
 
 function onRaised(e) {
   S.raised += 1;
-  const host = $('findings');
-  // Remove the placeholder by its own id. Matching on a class the specimens
-  // themselves also carry meant every new specimen wiped the ones before it.
-  const placeholder = $('nospecimens');
-  if (placeholder) placeholder.remove();
+  const wrap = el('div', 'node in-ink');
+  const box = el('div', 'claim trying');
+  box.append(el('span', 't', e.title));
+  box.append(el('div', 'where', short(e.file) + (e.line ? ':' + e.line : '') +
+                                '  ' + (e.severity || 'material')));
+  box.append(el('p', 'sum', e.summary || ''));
+  const acts = el('div', 'acts');
+  const kids = el('div', 'kids');
+  const ruling = el('div', 'ruling');
+  ruling.append(el('span', 'w', 'under attack'), el('span', 'c', 'three verifiers'));
+  wrap.append(box, acts, kids, ruling);
 
-  const wrap = el('div', 'spec');
-  const disp = el('div', 'marg disposition');
-  disp.append(el('span', 'word', 'under examination'));
-  disp.append(el('span', 'count', ''));
+  // Attach under the examiner that raised it when we can identify it, else
+  // under the planner, so a claim is never orphaned.
+  const parent = laneHost(e.lane) || S.agents.get('__planner');
+  parent.kids.append(wrap);
 
-  const body = el('div', 'meas finding trying arrives');
-  body.append(el('span', 'num', '[' + S.raised + ']'));
-  body.append(el('h2', null, e.title));
-  const cite = el('div', 'cite');
-  cite.append(el('span', 'mono', short(e.file) + (e.line ? ' at line ' + e.line : '')));
-  cite.append(el('span', null, ' · '));
-  cite.append(el('span', 'sev', e.severity || 'material'));
-  body.append(cite);
-  body.append(el('p', 'sum', e.summary || ''));
-  const verdicts = el('div', 'verdicts');
-  body.append(verdicts);
+  S.claims.set(e.id, { wrap, box, kids, acts, ruling, seen: 0, data: e });
+  tally();
+}
 
-  wrap.append(disp, body);
-  host.append(wrap);
-  S.specimens.set(e.id, { wrap, body, disp, verdicts, n: S.raised, data: e, seen: 0 });
-  updateTally();
+function laneHost(lane) {
+  for (const [id, a] of S.agents) {
+    if (id === '__planner') continue;
+    const role = a.who.querySelector('.role');
+    if (role && role.textContent === lane) return a;
+  }
+  return null;
 }
 
 function onMerged(e) {
-  const keep = S.specimens.get(e.into);
-  const drop = S.specimens.get(e.dropped);
-  if (drop) { drop.wrap.remove(); S.specimens.delete(e.dropped); }
+  const drop = S.claims.get(e.dropped);
+  if (drop) { drop.wrap.remove(); S.claims.delete(e.dropped); }
   if (S.raised > 0) S.raised -= 1;
-  renumber();
+  const keep = S.claims.get(e.into);
   if (keep) {
-    keep.corroborated = (keep.corroborated || 0) + 1;
-    const cite = keep.body.querySelector('.cite');
-    if (cite) cite.append(el('span', null,
-      ' · raised independently by ' + say(keep.corroborated + 1) + ' examiners'));
+    keep.corr = (keep.corr || 0) + 1;
+    const w = keep.box.querySelector('.where');
+    if (w) w.textContent += '  ·  raised independently by ' + say(keep.corr + 1) + ' examiners';
   }
-  updateTally();
-}
-
-function renumber() {
-  let n = 0;
-  S.specimens.forEach(s => { n += 1; s.n = n; s.body.querySelector('.num').textContent = '[' + n + ']'; });
+  tally();
 }
 
 function onVerdict(e) {
-  const s = S.specimens.get(e.finding);
-  if (!s) return;
-  s.seen += 1;
-  const line = el('div', 'v arrives' + (e.refuted ? ' killer' : ''));
-  const r = el('span', 'r', e.reasoning || (e.refuted ? 'refutes.' : 'does not refute.'));
-  line.append(el('span', null, '(' + ROMAN[s.seen - 1] + ') Examiner ' +
-                (e.refuted ? 'refutes: ' : 'declines to refute: ')), r);
-  s.verdicts.append(line);
-  s.disp.querySelector('.count').textContent = s.seen + ' of 3 returned';
+  const c = S.claims.get(e.finding);
+  if (!c) return;
+  c.seen += 1;
+  const v = el('div', 'verdict in-ink' + (e.refuted ? ' kills' : ''));
+  v.append(el('span', 'n', '(' + ROMAN[c.seen - 1] + ')'));
+  v.append(el('span', 'r',
+    (e.refuted ? 'Refutes. ' : 'Cannot refute. ') + (e.reasoning || '')));
+  c.kids.append(v);
+  c.ruling.querySelector('.c').textContent = c.seen + ' of 3 returned';
 }
 
 function onSettled(e) {
-  const s = S.specimens.get(e.id);
-  if (!s) return;
-  s.body.classList.remove('trying');
-  const word = s.disp.querySelector('.word');
-  const count = s.disp.querySelector('.count');
-
+  const c = S.claims.get(e.id);
+  if (!c) return;
+  c.box.classList.remove('trying');
+  const w = c.ruling.querySelector('.w');
+  const n = c.ruling.querySelector('.c');
   if (e.survived) {
     S.stood += 1;
-    word.textContent = 'stands';
-    count.textContent = e.survived_by + ' of ' + (e.survived_by + e.refuted_by) +
-                        ' declined to refute';
+    c.box.classList.add('stands');
+    w.textContent = 'Stands';
+    n.textContent = e.survived_by + ' of ' + (e.survived_by + e.refuted_by) +
+                    ' could not refute it';
   } else {
-    S.struck += 1;
-    s.body.classList.add('struck');
-    s.disp.classList.add('struck');
-    word.textContent = 'struck out';
-    count.textContent = 'refuted by ' + e.refuted_by + ' of ' +
-                        (e.survived_by + e.refuted_by);
+    S.out += 1;
+    c.box.classList.add('out');
+    c.ruling.classList.add('out');
+    w.textContent = 'Refuted';
+    n.textContent = 'destroyed by ' + e.refuted_by + ' of ' +
+                    (e.survived_by + e.refuted_by);
   }
-  updateTally();
+  tally();
 }
 
-function updateTally() {
+function tally() {
   const t = $('tally');
   t.innerHTML = '';
-  if (!S.raised) { t.textContent = 'examination in progress'; return; }
-  const pending = S.raised - S.struck - S.stood;
+  if (!S.raised) { t.textContent = S.started ? 'nothing raised yet' : ''; return; }
   t.append(el('span', null, say(S.raised) + ' raised · '));
-  if (S.struck) {
-    t.append(el('b', 'struck', say(S.struck)), el('span', null, ' struck out · '));
-  }
-  // "none standing" rather than "no standing", which reads as a missing noun.
-  t.append(el('b', null, S.stood ? say(S.stood) : 'none'),
-           el('span', null, ' standing'));
-  if (pending > 0) t.append(el('span', null, ' · ' + say(pending) + ' under examination'));
+  if (S.out) t.append(el('b', 'out', say(S.out)), el('span', null, ' refuted · '));
+  t.append(el('b', null, S.stood ? say(S.stood) : 'none'), el('span', null, ' standing'));
 }
 
-/* --------------------------------------------------------------- issuing */
+/* ---------------------------------------------------------------- closing */
 
 function onFinished(e) {
-  clearInterval(S.timer);
-  clock();
+  clearInterval(S.timer); clock();
   if (S.source) S.source.close();
+  $('phase').textContent = 'closed';
+  S.agents.forEach(a => { a.who.classList.remove('live'); a.who.classList.add('done'); });
 
   (e.findings || []).forEach(f => {
-    const s = S.specimens.get(f.id);
-    if (s && f.failure_scenario && !s.body.querySelector('.fail')) {
-      s.body.append(el('p', 'fail arrives', f.failure_scenario));
+    const c = S.claims.get(f.id);
+    if (c && f.failure_scenario && !c.box.querySelector('.repro')) {
+      c.box.append(el('p', 'repro', f.failure_scenario));
     }
   });
 
-  const attrition = e.raised ? Math.round((e.raised - e.survived) / e.raised * 100) : 0;
-  const head = $('headnote');
-  head.innerHTML = '';
-  head.append(el('span', null,
-    `${say(e.lanes ? e.lanes.length : 0).replace(/^n/, 'N')} lines of examination were opened. ` +
-    `${say(e.raised).replace(/^n/, 'N')} specimen${e.raised === 1 ? '' : 's'} ` +
+  const killed = e.raised - e.survived;
+  const attrition = e.raised ? Math.round(killed / e.raised * 100) : 0;
+
+  const box = el('div', 'closing in-ink');
+  box.append(el('h2', null, 'What survived'));
+  const p = el('p');
+  p.append(el('span', null,
+    `${Say(e.lanes ? e.lanes.length : 0)} lines of attack were opened and ` +
+    `${say(e.raised)} claim${e.raised === 1 ? '' : 's'} ` +
     `${e.raised === 1 ? 'was' : 'were'} raised. `));
-  const kill = el('em', null,
-    `${say(e.raised - e.survived).replace(/^n/, 'N')} ` +
-    `${e.raised - e.survived === 1 ? 'was' : 'were'} struck out on refutation, ` +
-    `an attrition of ${attrition} per cent. `);
-  head.append(kill);
-  head.append(el('span', null,
-    `${say(e.survived).replace(/^n/, 'N')} stand${e.survived === 1 ? 's' : ''}.`));
+  p.append(el('em', null,
+    `${Say(killed)} ${killed === 1 ? 'was' : 'were'} destroyed under ` +
+    `verification, an attrition of ${attrition} per cent. `));
+  p.append(el('span', null,
+    `${Say(e.survived)} stand${e.survived === 1 ? 's' : ''}, each with a ` +
+    `reproduction you can check.`));
+  box.append(p);
 
-  $('state').textContent = 'Examination closed';
-  $('root').textContent = (e.ledger_head || '').slice(0, 32).replace(/(.{4})/g, '$1 ').trim();
-  $('entries').textContent = (e.tool_calls || 0) + ' actions, ' + (e.refusals || 0) + ' refused';
-  $('issuedfoot').textContent = stamp();
+  const rows = el('div', 'rows');
+  const row = (k, v) => { const d = el('div'); d.append(el('span', null, k), el('span', 'mono', v)); rows.append(d); };
+  row('Model spend', money(e.spend_usd) + ' over ' + e.calls + ' calls');
+  row('Actions taken', (e.tool_calls || 0) + ' reads, ' + (e.refusals || 0) + ' refused by policy');
+  row('Elapsed', e.seconds + 's');
+  row('Ledger root', (e.ledger_head || '').slice(0, 24).replace(/(.{4})/g, '$1 ').trim());
+  box.append(rows);
 
-  const link = el('div', 'row');
-  const a = el('a', null, 'Download the ledger and verify the chain');
+  const link = el('p'); link.style.marginTop = '10px'; link.style.fontSize = 'var(--t-marg)';
+  const a = el('a', null, 'Download the ledger and verify the chain yourself');
   a.href = '/api/ledger/' + e.run_id;
   link.append(a);
-  $('colophon').append(link);
+  box.append(link);
 
-  if (e.halted) notice('The examination stopped early: ' + e.halted);
-
-  // The apparatus collapses and the certificate is left alone. This is the
-  // state that gets screenshotted, so nothing operational stays in frame.
-  document.body.classList.add('settled');
+  $('closing').append(box);
+  $('state').textContent = 'Run closed';
+  if (e.halted) notice('The run stopped early: ' + e.halted);
 }
 
 boot();
