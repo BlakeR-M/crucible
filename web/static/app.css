@@ -1,0 +1,531 @@
+/* Crucible.
+ *
+ * An instrument, not a dashboard. The reference points are assay reports and
+ * test telemetry rather than developer-tool marketing, and every rule below is
+ * calibrated to one reaction: the person who built this has done it before.
+ *
+ * Three ideas carry the whole thing.
+ *
+ * Panels are full bleed, separated by hairlines, with no radius and no shadow.
+ * Rounded cards floating on a background is the most reliable tell of a
+ * template; edge-to-edge panels divided by 1px rules is what instrumentation
+ * looks like.
+ *
+ * The destroyed pile keeps permanent screen space. A system that shows how
+ * much of its own output it threw away is making the trust argument
+ * structurally instead of in copy, and that is the argument.
+ *
+ * Colour is never the only channel. Every state carries a glyph and a word as
+ * well, which survives colour blindness, a projector, and the printed
+ * screenshot that is how half this audience will actually see it.
+ */
+
+:root {
+  --void:            #07090B;
+  --surface-base:    #0C0F12;
+  --surface-raised:  #12161A;
+  --surface-inset:   #171C21;
+  --surface-overlay: #1D2329;
+
+  --line-hairline:   #1E252B;
+  --line:            #2A3238;
+  --line-active:     #64707A;
+
+  --text-primary:    #E6EAEE;
+  --text-secondary:  #A7B1BA;
+  --text-tertiary:   #848F99;
+  --text-code:       #C9D2DA;
+
+  /* Five states. No sixth. Each verified at AA or better on every surface it
+     is permitted on. */
+  --st-pending:      #8C97A3;
+  --st-running:      #E8933A;
+  --st-survived:     #35C48F;
+  --st-refuted:      #F2555A;
+  --st-refused:      #9E86FF;
+
+  --st-running-dim:  #2A1C0C;
+  --st-survived-dim: #0E2A20;
+  --st-refuted-dim:  #2E1214;
+  --st-refused-dim:  #1E1833;
+
+  --focus:           #9CC6E8;
+  --steel:           #7FB0D9;
+
+  --f-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont,
+            "Segoe UI Variable Text", "Segoe UI", system-ui,
+            "Helvetica Neue", Arial, sans-serif;
+  --f-serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino,
+             "Book Antiqua", Georgia, "Times New Roman", serif;
+  --f-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco,
+            "Cascadia Mono", "Cascadia Code", Consolas,
+            "DejaVu Sans Mono", "Liberation Mono", monospace;
+
+  --r-sm: 2px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--void);
+  color: var(--text-primary);
+  font-family: var(--f-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Machine truth is mono and tabular, without exception. A counter whose digits
+   change width as it ticks is the other reliable template tell. */
+.mono, .num, .spine-drawer, code {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+a { color: var(--steel); text-decoration: none; }
+a:hover { text-decoration: underline; }
+::selection { background: #24303A; color: var(--text-primary); }
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line); }
+::-webkit-scrollbar-track { background: transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+/* ------------------------------------------------------------ the glyphs */
+/* Five marks on one 12px grid, drawn rather than imported. Each state reads
+   without colour. */
+
+.glyph {
+  width: 12px; height: 12px; flex: 0 0 12px;
+  display: inline-block; vertical-align: -1px;
+  position: relative;
+}
+.glyph::before {
+  content: ""; position: absolute; left: 2px; top: 2px;
+  width: 7px; height: 7px;
+  border: 1.25px solid currentColor;
+}
+.glyph.pending::before { opacity: .55; }
+.glyph.running::before {
+  background: linear-gradient(to top, currentColor 45%, transparent 45%);
+}
+.glyph.survived::before { background: currentColor; box-shadow: 0 0 0 1px var(--void), 0 0 0 2px currentColor; }
+.glyph.refuted::after {
+  content: ""; position: absolute; left: 0.5px; top: 5.2px;
+  width: 12px; height: 1.25px; background: currentColor;
+  transform: rotate(-45deg);
+}
+.glyph.refused::after {
+  content: ""; position: absolute; left: 0; top: 5.2px;
+  width: 12px; height: 1.25px; background: currentColor;
+}
+
+/* -------------------------------------------------------------- idle page */
+
+.idle {
+  height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-start;
+  padding-top: 30vh; background: var(--void);
+}
+.idle .wordmark {
+  font-family: var(--f-serif); font-size: 16px; font-weight: 400;
+  letter-spacing: .22em; text-transform: uppercase;
+  color: var(--text-tertiary); margin-bottom: 24px;
+}
+.idle .thesis {
+  font-family: var(--f-serif); font-size: 27px; line-height: 38px;
+  letter-spacing: -.005em; color: var(--text-secondary);
+  max-width: 720px; text-align: center; margin-bottom: 34px;
+}
+.idle .panel { width: min(720px, calc(100vw - 48px)); }
+
+.choices { display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+           background: var(--line); border: 1px solid var(--line); }
+.choice {
+  background: var(--surface-inset); padding: 11px 13px; cursor: pointer;
+  transition: background .12s ease;
+}
+.choice:hover { background: var(--surface-overlay); }
+.choice input { position: absolute; opacity: 0; pointer-events: none; }
+.choice.on { background: var(--st-running-dim); box-shadow: inset 2px 0 0 var(--st-running); }
+.choice .t { font-size: 13px; font-weight: 600; }
+.choice .d { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; line-height: 1.4; }
+
+.ignite {
+  margin-top: 16px; height: 34px; padding: 0 22px;
+  background: var(--st-running); color: var(--void);
+  border: 0; border-radius: var(--r-sm); cursor: pointer;
+  font-family: var(--f-sans); font-size: 11px; font-weight: 600;
+  letter-spacing: .09em; text-transform: uppercase;
+  transition: filter .12s ease;
+}
+.ignite:hover:not(:disabled) { filter: brightness(1.1); }
+.ignite:disabled { background: var(--surface-overlay); color: var(--text-tertiary); cursor: not-allowed; }
+
+.ruleline {
+  margin-top: 14px; font-family: var(--f-mono); font-size: 11px;
+  color: var(--text-tertiary); line-height: 1.6;
+}
+
+/* ------------------------------------------------------------- instrument */
+
+.shell { display: none; height: 100vh; grid-template-columns: 4px 1fr; }
+body.running .shell { display: grid; }
+body.running .idle { display: none; }
+
+/* The spine. A continuous record of the run accruing down the left edge,
+   coloured by entry class. Over a long run it becomes a seismogram of the
+   whole session, and it is structural rather than a page you navigate to. */
+.spine {
+  background: var(--surface-base); border-right: 1px solid var(--line-hairline);
+  display: flex; flex-direction: column; cursor: pointer; overflow: hidden;
+}
+.spine i { display: block; width: 100%; height: 2px; flex: 0 0 2px; background: var(--line); }
+.spine i.call { background: var(--line); }
+.spine i.raise { background: var(--line-active); }
+.spine i.kept { background: var(--st-survived); }
+.spine i.killed { background: var(--st-refuted); }
+.spine i.refused { background: var(--st-refused); }
+
+.rig {
+  display: grid;
+  grid-template-rows: 48px 2px 1fr 28px;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------------- masthead */
+
+.masthead {
+  display: flex; align-items: center; gap: 20px; padding: 0 16px;
+  border-bottom: 1px solid var(--line); background: var(--surface-base);
+}
+.masthead .wm {
+  font-family: var(--f-serif); font-size: 13px; letter-spacing: .22em;
+  text-transform: uppercase; color: var(--text-secondary);
+}
+.masthead .runid, .masthead .clock {
+  font-family: var(--f-mono); font-size: 12px; color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.masthead .phase {
+  font-size: 11px; font-weight: 600; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--st-running);
+}
+/* The largest number on the page, because it is the entire thesis. */
+.ratio {
+  margin-left: auto; display: flex; align-items: baseline; gap: 7px;
+  font-family: var(--f-mono); font-size: 20px; font-weight: 500;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.ratio .kept { color: var(--st-survived); }
+.ratio .sep, .ratio .all { color: var(--text-tertiary); }
+.ratio .cap {
+  font-family: var(--f-sans); font-size: 10px; font-weight: 500;
+  letter-spacing: .10em; text-transform: uppercase; color: var(--text-tertiary);
+}
+
+/* The only thing that animates continuously, and only while agents work. */
+.heat { background: var(--line-hairline); overflow: hidden; }
+body.hot .heat {
+  background: linear-gradient(90deg, transparent, var(--st-running), transparent);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: sweep 1.9s linear infinite;
+}
+@keyframes sweep { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  body.hot .heat { animation: none; background: var(--st-running); opacity: .5; }
+}
+
+/* ----------------------------------------------------------------- panels */
+
+.floor {
+  display: grid; grid-template-columns: 288px 1fr 400px;
+  min-height: 0; background: var(--line-hairline); gap: 1px;
+}
+.panel { background: var(--surface-base); min-height: 0; display: flex; flex-direction: column; }
+.panel > .body { overflow-y: auto; padding: 14px 16px; min-height: 0; }
+
+.cap {
+  flex: 0 0 auto; height: 32px; display: flex; align-items: center; gap: 8px;
+  padding: 0 16px; border-bottom: 1px solid var(--line-hairline);
+  font-size: 10px; font-weight: 500; letter-spacing: .10em;
+  text-transform: uppercase; color: var(--text-tertiary);
+}
+.cap .n {
+  margin-left: auto; font-family: var(--f-mono); font-size: 12px;
+  letter-spacing: 0; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+/* ------------------------------------------------------------- the brief */
+
+.brief .task {
+  font-size: 13px; color: var(--text-secondary); line-height: 1.55;
+  padding-bottom: 13px; border-bottom: 1px solid var(--line-hairline);
+}
+.counters { padding: 13px 0; border-bottom: 1px solid var(--line-hairline); }
+.counters .row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  height: 24px; font-size: 12px; color: var(--text-tertiary);
+}
+.counters .row b {
+  font-family: var(--f-mono); font-weight: 400; font-size: 12px;
+  color: var(--text-primary); font-variant-numeric: tabular-nums slashed-zero;
+}
+.counters .row b.warn { color: var(--st-refused); }
+
+.rules { padding-top: 13px; }
+.rules .r {
+  display: flex; gap: 9px; height: 22px; align-items: center;
+  font-family: var(--f-mono); font-size: 11.5px;
+}
+.rules .r .t { color: var(--text-code); min-width: 92px; }
+.rules .r .s { color: var(--text-tertiary); overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
+.rules .r.no .t, .rules .r.no .s { color: var(--st-refused); }
+.hint { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; margin-top: 12px; }
+
+/* ----------------------------------------------------------- the lattice */
+
+.centre { display: grid; grid-template-rows: 1fr 1px 42%; min-height: 0; background: var(--line-hairline); }
+.centre > .split { background: var(--line-hairline); }
+
+.lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 1px; }
+.lane {
+  background: var(--surface-raised); min-height: 132px;
+  display: flex; flex-direction: column;
+  animation: settle .18s ease both;
+}
+@keyframes settle { from { opacity: 0; } }
+.lane .hd {
+  height: 40px; flex: 0 0 40px; display: flex; align-items: center; gap: 7px;
+  padding: 0 10px; border-bottom: 1px solid var(--line-hairline);
+}
+.lane .hd .id {
+  font-family: var(--f-mono); font-size: 11.5px; color: var(--text-code);
+}
+.lane .hd .n {
+  margin-left: auto; font-family: var(--f-mono); font-size: 10.5px;
+  color: var(--text-tertiary); font-variant-numeric: tabular-nums;
+}
+.lane .sub {
+  padding: 5px 10px 0; font-size: 11px; color: var(--text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lane .tape {
+  flex: 1; overflow-y: auto; padding: 5px 10px 9px;
+  font-family: var(--f-mono); font-size: 10.5px; line-height: 15px;
+  letter-spacing: .01em;
+}
+.lane .tape .l { display: flex; gap: 7px; color: var(--text-tertiary); }
+.lane .tape .l .v { color: var(--steel); flex: 0 0 auto; }
+.lane .tape .l .a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lane .tape .l.no .v, .lane .tape .l.no .a { color: var(--st-refused); }
+
+.lane.pending { color: var(--st-pending); }
+.lane.running { color: var(--st-running); }
+.lane.survived { color: var(--st-survived); }
+
+/* --------------------------------------------------------- the crucible */
+
+.fire .body { display: flex; flex-direction: column; gap: 1px; padding: 0; }
+.trial {
+  background: var(--surface-raised); padding: 11px 16px;
+  animation: settle .18s ease both;
+  transition: opacity .35s ease, transform .35s ease;
+}
+.trial .t { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.trial .w {
+  font-family: var(--f-mono); font-size: 11px; color: var(--text-tertiary);
+  margin-top: 3px;
+}
+.trial .pips { display: flex; gap: 3px; margin-top: 9px; align-items: center; }
+.trial .pips .p {
+  width: 26px; height: 3px; background: var(--line);
+  transition: background .25s ease;
+}
+.trial .pips .p.kept { background: var(--st-survived); }
+.trial .pips .p.killed { background: var(--st-refuted); }
+.trial .pips .lbl {
+  margin-left: 9px; font-size: 10px; font-weight: 500; letter-spacing: .10em;
+  text-transform: uppercase; color: var(--text-tertiary);
+}
+.trial.gone { opacity: 0; transform: translateY(-6px); }
+
+/* ------------------------------------------------------------- the assay */
+
+.assay .body { padding: 0; }
+.stack { border-bottom: 1px solid var(--line-hairline); }
+.stack > .h {
+  height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 16px;
+  font-size: 10px; font-weight: 600; letter-spacing: .10em;
+  text-transform: uppercase; background: var(--surface-base);
+  position: sticky; top: 0; z-index: 1;
+}
+.stack.kept > .h { color: var(--st-survived); }
+.stack.killed > .h { color: var(--st-refuted); }
+.stack.blocked > .h { color: var(--st-refused); }
+.stack > .h .n {
+  margin-left: auto; font-family: var(--f-mono); font-size: 12px;
+  letter-spacing: 0; font-variant-numeric: tabular-nums slashed-zero;
+}
+/* The kill log never collapses to nothing. It is the evidence that the
+   survivors mean something. */
+.stack.killed > .list { min-height: 92px; }
+.stack > .list { max-height: 42vh; overflow-y: auto; }
+
+.won {
+  padding: 12px 16px; border-bottom: 1px solid var(--line-hairline);
+  border-left: 2px solid var(--st-survived); background: var(--st-survived-dim);
+  animation: settle .2s ease both;
+}
+.won .t { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.won .w { font-family: var(--f-mono); font-size: 11px; color: var(--text-tertiary); margin-top: 4px; }
+.won .s { font-size: 12.5px; color: var(--text-secondary); margin-top: 7px; line-height: 1.5; }
+.won .f {
+  font-family: var(--f-mono); font-size: 11.5px; line-height: 17px;
+  color: var(--text-code); margin-top: 8px; padding: 8px 10px;
+  background: var(--surface-inset); border-left: 1px solid var(--line);
+}
+.won .sev {
+  float: right; font-family: var(--f-mono); font-size: 10px;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--text-tertiary);
+}
+
+.lost, .blockrow {
+  display: flex; gap: 9px; align-items: baseline; padding: 7px 16px;
+  border-bottom: 1px solid var(--line-hairline); font-size: 12px;
+  color: var(--text-tertiary); animation: settle .2s ease both;
+}
+.lost .t { color: var(--text-secondary); overflow: hidden;
+           text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.lost .v { font-family: var(--f-mono); font-size: 11px; flex: 0 0 auto; }
+.blockrow { color: var(--st-refused); }
+.blockrow .r { font-family: var(--f-mono); font-size: 11px; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
+
+.nil {
+  padding: 18px 16px; font-size: 12px; color: var(--text-tertiary);
+  line-height: 1.55;
+}
+
+/* -------------------------------------------------------------- footer */
+
+.footer {
+  display: flex; align-items: center; gap: 16px; padding: 0 16px;
+  border-top: 1px solid var(--line); background: var(--surface-base);
+  font-family: var(--f-mono); font-size: 11px; color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.footer .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--st-survived);
+}
+.footer .dot.off { background: var(--st-refuted); }
+.footer .root { color: var(--steel); cursor: pointer; }
+.footer .right { margin-left: auto; display: flex; gap: 16px; }
+
+.alarm {
+  padding: 9px 16px; background: var(--st-refuted-dim);
+  border-bottom: 1px solid var(--st-refuted);
+  color: var(--st-refuted); font-size: 12px;
+}
+
+/* -------------------------------------------------------------- drawer */
+
+.drawer {
+  position: fixed; inset: 0 auto 0 0; width: 520px; max-width: 92vw;
+  background: var(--surface-overlay); border-right: 1px solid var(--line);
+  box-shadow: 0 24px 64px -12px rgba(0,0,0,.72);
+  transform: translateX(-100%); transition: transform .22s ease;
+  z-index: 10; display: flex; flex-direction: column;
+}
+.drawer.open { transform: none; }
+.drawer .h {
+  height: 44px; flex: 0 0 44px; display: flex; align-items: center; gap: 12px;
+  padding: 0 16px; border-bottom: 1px solid var(--line);
+  font-size: 11px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
+}
+.drawer .h button {
+  margin-left: auto; background: none; border: 1px solid var(--line);
+  color: var(--text-secondary); font-family: var(--f-sans); font-size: 10px;
+  letter-spacing: .09em; text-transform: uppercase; padding: 5px 10px;
+  border-radius: var(--r-sm); cursor: pointer;
+}
+.drawer .h button:hover { border-color: var(--line-active); color: var(--text-primary); }
+.drawer .body { flex: 1; overflow-y: auto; padding: 12px 16px; }
+.drawer .e {
+  display: grid; grid-template-columns: 42px 92px 1fr;
+  gap: 10px; padding: 4px 0; font-family: var(--f-mono); font-size: 11px;
+  border-bottom: 1px solid var(--line-hairline);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.drawer .e .q { color: var(--text-tertiary); }
+.drawer .e .k { color: var(--text-code); }
+.drawer .e .p { color: var(--text-tertiary); overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
+.verdictbar {
+  padding: 10px 16px; border-bottom: 1px solid var(--line);
+  font-family: var(--f-mono); font-size: 11.5px; color: var(--st-survived);
+}
+.verdictbar.bad { color: var(--st-refuted); }
+
+/* ------------------------------------------------------------ responsive */
+
+@media (max-width: 1240px) {
+  .floor { grid-template-columns: 250px 1fr; }
+  .assay { grid-column: 1 / -1; max-height: 44vh; }
+}
+@media (max-width: 900px) {
+  html, body { overflow: auto; }
+  .shell { grid-template-columns: 4px 1fr; }
+  .floor { grid-template-columns: 1fr; }
+  .brief { display: none; }
+  .centre { grid-template-rows: auto 1px auto; }
+  .ratio { font-size: 16px; }
+  .masthead .runid, .masthead .clock { display: none; }
+}
+
+/* ---------------------------------------------------------------- login */
+
+.gate { height: 100vh; display: grid; place-items: center; padding: 20px; }
+.gate .card {
+  width: 100%; max-width: 360px; background: var(--surface-base);
+  border: 1px solid var(--line); padding: 30px;
+}
+.gate .wordmark {
+  font-family: var(--f-serif); font-size: 15px; letter-spacing: .22em;
+  text-transform: uppercase; color: var(--text-secondary);
+  text-align: center; margin-bottom: 8px;
+}
+.gate .sub {
+  text-align: center; color: var(--text-tertiary); font-size: 12.5px;
+  line-height: 1.55; margin-bottom: 26px;
+}
+.gate label {
+  display: block; font-size: 10px; font-weight: 600; letter-spacing: .10em;
+  text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 6px;
+}
+.gate input {
+  width: 100%; height: 34px; padding: 0 11px; margin-bottom: 16px;
+  background: var(--surface-inset); border: 1px solid var(--line);
+  border-radius: var(--r-sm); color: var(--text-primary);
+  font-family: var(--f-mono); font-size: 12.5px;
+}
+.gate input:focus { outline: none; border-color: var(--line-active); }
+.gate .ignite { width: 100%; margin-top: 0; }
+.gate .bad {
+  border-left: 2px solid var(--st-refuted); background: var(--st-refuted-dim);
+  color: var(--st-refuted); padding: 9px 11px; font-size: 12px; margin-bottom: 18px;
+}
+.gate .fine {
+  margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line-hairline);
+  font-size: 11.5px; color: var(--text-tertiary); line-height: 1.6; text-align: center;
+}

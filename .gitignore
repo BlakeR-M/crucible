@@ -1,0 +1,16 @@
+# Never. The arena reads a key from the environment on the host.
+.env
+*.env
+!demo_target/**
+
+# Run ledgers are written at runtime and are per-deployment.
+runs/*.jsonl
+
+# Scratch the agents are permitted to write into.
+demo_target/.crucible-scratch/
+
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+Thumbs.db

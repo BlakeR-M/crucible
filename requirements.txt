@@ -1,0 +1,10 @@
+# Standard library only. Nothing to install.
+#
+# This is deliberate rather than minimalist for its own sake. The arena argues
+# that an autonomous system should be auditable, and a reviewer who has to
+# trust a dependency tree to audit the thing auditing their code has been given
+# a weaker argument. Everything here can be read.
+#
+# The file is kept because it makes the build's language detection
+# unambiguous, and because an empty one states the intent better than an
+# absent one.

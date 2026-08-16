@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Crucible</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2307090B'/><rect x='4' y='4' width='8' height='8' fill='none' stroke='%23E8933A' stroke-width='1.5'/></svg>">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="gate">
+  <form class="card" method="post" action="/api/login">
+    <div class="wordmark">Crucible</div>
+    <p class="sub">Adversarial review arena.<br>Access is by invitation.</p>
+
+    <div class="bad" id="bad" hidden>Those credentials were not accepted.</div>
+
+    <label for="user">Operator</label>
+    <input id="user" name="user" autocomplete="username" autocapitalize="off"
+           autocorrect="off" spellcheck="false" required autofocus>
+
+    <label for="password">Key</label>
+    <input id="password" name="password" type="password"
+           autocomplete="current-password" required>
+
+    <button class="ignite" type="submit">Enter</button>
+
+    <p class="fine">
+      Runs are metered and bounded. Every action taken inside is written to a
+      hash-chained ledger you can download and verify yourself.
+    </p>
+  </form>
+</main>
+<script>
+  if (new URLSearchParams(location.search).has('bad')) {
+    document.getElementById('bad').hidden = false;
+  }
+</script>
+</body>
+</html>
