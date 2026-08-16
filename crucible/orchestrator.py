@@ -54,6 +54,7 @@ class Finding:
     evidence: str = ""
     verdicts: list = field(default_factory=list)
     survived: bool = False
+    settled: bool = False
     # How many other hunters independently raised the same thing. Reported
     # rather than hidden: two lanes arriving at one defect separately is
     # corroboration and worth a reader knowing.
@@ -290,6 +291,9 @@ class Orchestrator:
         self.max_workers = max_workers
         self._emit = emit or (lambda event: None)
         self._emit_lock = threading.Lock()
+        # Verifiers settle their own finding the moment its panel completes, so
+        # two threads can reach the same finding at once. One decision each.
+        self._settle_lock = threading.Lock()
         self.toolbox = Toolbox(self.workspace, policy, ledger)
         # Taken from the policy rather than hardcoded, so a tool added to the
         # policy is recognised on the wire without a second edit here.
@@ -547,6 +551,21 @@ class Orchestrator:
             self.emit("deduped", before=len(findings), after=len(kept))
         return kept
 
+    def _settle(self, finding: Finding) -> None:
+        """Decide one finding, once. Safe to call from any verifier thread."""
+        with self._settle_lock:
+            if finding.settled:
+                return
+            finding.settled = True
+            finding.survived = finding.survivals >= SURVIVAL_THRESHOLD
+        self.ledger.append(
+            "finding_judged", finding=finding.id, title=finding.title,
+            survived=finding.survived,
+            refuted_by=finding.refutations, survived_by=finding.survivals,
+        )
+        self.emit("finding_settled", id=finding.id, survived=finding.survived,
+                  refuted_by=finding.refutations, survived_by=finding.survivals)
+
     def verify(self, findings: list[Finding]) -> None:
         """Every finding, several independent attempts to destroy it."""
         self.emit("phase", phase="verify", findings=len(findings))
@@ -588,9 +607,18 @@ class Orchestrator:
             }
             with lock:
                 finding.verdicts.append(verdict)
+                complete = len(finding.verdicts) >= VERIFIERS_PER_FINDING
             self.emit("verdict", finding=finding.id, agent=agent_id,
                       refuted=verdict["refuted"], confidence=verdict["confidence"],
                       reasoning=verdict["reasoning"])
+            # Settle the moment this finding's own panel is complete, rather
+            # than waiting for every other finding's verifiers to finish too.
+            # Otherwise a run holds a dozen specimens open for the whole phase
+            # and resolves them all in one silent instant at the end, which is
+            # both a worse thing to watch and a worse account of what happened:
+            # each finding was in fact decided at a particular moment.
+            if complete:
+                self._settle(finding)
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             futures = [pool.submit(one_verdict, f, n) for f, n in jobs]
@@ -606,16 +634,12 @@ class Orchestrator:
                     self.ledger.append("worker_failed",
                                        reason=f"{type(exc).__name__}: {exc}"[:300])
 
+        # Anything the pool failed to complete a panel for still has to be
+        # decided, and decided against, since an unjudged finding must never
+        # be reported as one that survived.
         for finding in findings:
-            finding.survived = finding.survivals >= SURVIVAL_THRESHOLD
-            self.ledger.append(
-                "finding_judged", finding=finding.id, title=finding.title,
-                survived=finding.survived,
-                refuted_by=finding.refutations, survived_by=finding.survivals,
-            )
-            self.emit("finding_settled", id=finding.id, survived=finding.survived,
-                      refuted_by=finding.refutations,
-                      survived_by=finding.survivals)
+            if not finding.settled:
+                self._settle(finding)
 
     # ------------------------------------------------------------------ run
 

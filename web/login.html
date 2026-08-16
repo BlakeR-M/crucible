@@ -5,30 +5,57 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Crucible</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2307090B'/><rect x='4' y='4' width='8' height='8' fill='none' stroke='%23E8933A' stroke-width='1.5'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23FBFAF7'/><path d='M2.5 8.2 L13.5 8.2' stroke='%238C1515' stroke-width='1.4'/></svg>">
 <link rel="stylesheet" href="/static/app.css">
+<style>
+  /* The gate is the certificate's cover sheet: the same paper, the same
+     rules, nothing extra invented for it. */
+  .gate { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+  .gate form { width: 100%; max-width: 380px; }
+  .gate .inmatter { font-size: var(--t-note); color: var(--ink-muted);
+                    letter-spacing: .1em; text-transform: uppercase; }
+  .gate h1 { font-family: var(--face-display); font-size: var(--t-title);
+             font-weight: 400; font-style: italic; margin: 6px 0 4px; }
+  .gate .sub { font-size: var(--t-sub); color: var(--ink-muted); }
+  .gate .field { margin-top: 18px; }
+  .gate label { display: block; font-size: var(--t-marg); color: var(--ink-muted);
+                margin-bottom: 4px; }
+  .gate input { width: 100%; padding: 6px 0; background: transparent;
+                border: 0; border-bottom: 1px solid var(--rule-strong);
+                font-family: var(--face-mono); font-size: var(--t-sub);
+                color: var(--ink); }
+  .gate input:focus { outline: none; border-bottom-color: var(--ink);
+                      border-bottom-width: 2px; }
+  .gate .fine { margin-top: 26px; padding-top: 14px;
+                border-top: 1px solid var(--rule-hair);
+                font-size: var(--t-note); color: var(--ink-muted); line-height: 1.7; }
+</style>
 </head>
 <body>
 <main class="gate">
-  <form class="card" method="post" action="/api/login">
-    <div class="wordmark">Crucible</div>
-    <p class="sub">Adversarial review arena.<br>Access is by invitation.</p>
+  <form method="post" action="/api/login">
+    <div class="inmatter">Certificate of examination</div>
+    <h1>Crucible</h1>
+    <p class="sub">Access is by invitation.</p>
 
-    <div class="bad" id="bad" hidden>Those credentials were not accepted.</div>
+    <div id="bad" hidden><p class="notice">Those credentials were not accepted.</p></div>
 
-    <label for="user">Operator</label>
-    <input id="user" name="user" autocomplete="username" autocapitalize="off"
-           autocorrect="off" spellcheck="false" required autofocus>
+    <div class="field">
+      <label for="user">Operator</label>
+      <input id="user" name="user" autocomplete="username" autocapitalize="off"
+             autocorrect="off" spellcheck="false" required autofocus>
+    </div>
+    <div class="field">
+      <label for="password">Key</label>
+      <input id="password" name="password" type="password"
+             autocomplete="current-password" required>
+    </div>
 
-    <label for="password">Key</label>
-    <input id="password" name="password" type="password"
-           autocomplete="current-password" required>
-
-    <button class="ignite" type="submit">Enter</button>
+    <button class="act" type="submit">Enter</button>
 
     <p class="fine">
-      Runs are metered and bounded. Every action taken inside is written to a
-      hash-chained ledger you can download and verify yourself.
+      Examinations are metered and bounded. Every action taken inside is written
+      to a hash-chained ledger you can download and verify yourself.
     </p>
   </form>
 </main>
