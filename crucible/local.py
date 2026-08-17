@@ -32,6 +32,12 @@ from .providers import Budget, Completion, OpenAIProvider, Tier
 # the shared _post always sets the header.
 UNUSED_KEY = "local-no-key-required"
 
+# Extra output allowance for a model that reasons before it answers. Sized from
+# the failure it exists to prevent rather than guessed: transcripts late in an
+# agent loop are long, the reasoning grows with them, and 4000 was still not
+# enough to stop two verifiers in a real run going quiet.
+THINKING_HEADROOM = 8_000
+
 
 class LocalProvider(OpenAIProvider):
     """llama.cpp's OpenAI-compatible server, priced at nothing.
@@ -94,7 +100,18 @@ class LocalProvider(OpenAIProvider):
             ],
             # The local server takes the older spelling. max_completion_tokens
             # is accepted by newer builds but max_tokens works on every one.
-            "max_tokens": max_output,
+            #
+            # A thinking model is paid for its thinking out of this same
+            # allowance, and llama.cpp routes the <think> block into
+            # reasoning_content while leaving content empty. Handed the bare
+            # 2200 an agent step asks for, Qwen3.5 spent all of it reasoning and
+            # returned an empty string on two replies in five. The first
+            # thinking-on arms of this benchmark ran that way and measured
+            # nothing but the allowance being too small: 89% of their dead
+            # replies were empty, every one of them stopped on length, every one
+            # at exactly 2200 tokens. Local tokens are free, so the headroom is
+            # generous rather than tuned.
+            "max_tokens": max_output + (THINKING_HEADROOM if self._think else 0),
             "temperature": self._temperature,
             "seed": self._next_seed(),
             # Qwen3.5 thinks by default and wraps it in <think> tags, which
