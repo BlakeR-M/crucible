@@ -86,6 +86,16 @@ class Budget:
     spent_usd: float = 0.0
     calls: int = 0
     by_model: dict[str, float] = field(default_factory=dict)
+    # A run against hardware the operator owns bills nothing, and that is a
+    # property of the run rather than of the model's name. Carried here instead
+    # of by writing zero rates into the module-level table, which was the
+    # earlier approach and was wrong three ways: setdefault cannot zero a name
+    # already in the table, so a local build called "gpt-5" kept the hosted
+    # price and its free run was refused by its own ceiling; the write was
+    # never undone, so one unmetered provider zeroed that model for every later
+    # run in the process; and a global mutated at construction time made two
+    # tests sharing an interpreter depend on their order.
+    unmetered: bool = False
     _reserved_usd: float = 0.0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -130,8 +140,9 @@ class Budget:
         reserve, such as the scripted one used in tests."""
         return self.settle(model, 0.0, prompt_tokens, output_tokens)
 
-    @staticmethod
-    def _price(model: str, prompt_tokens: int, output_tokens: int) -> float:
+    def _price(self, model: str, prompt_tokens: int, output_tokens: int) -> float:
+        if self.unmetered:
+            return 0.0
         # An unknown model is priced at the most expensive known rate rather
         # than at zero, so adding a model cannot silently disable the cap.
         rate_in, rate_out = RATES.get(model, max(RATES.values()))
@@ -152,8 +163,17 @@ class Completion:
     seconds: float
 
 
+DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
+
 class OpenAIProvider:
     """Chat completions over plain urllib, so the arena has no dependencies.
+
+    Written against the OpenAI chat API, which is the closest thing this field
+    has to a wire standard: llama.cpp, Ollama, vLLM and LM Studio all speak it.
+    So pointing the arena at a model on the operator's own hardware is a base
+    URL rather than a second implementation, and the code path that gets
+    exercised against a hosted model is the same one that runs air-gapped.
 
     Retries only the failures that are worth retrying: rate limits and 5xx. A
     refusal, a bad request or an auth failure is returned as an error rather
@@ -161,21 +181,54 @@ class OpenAIProvider:
     """
 
     name = "openai"
-    ENDPOINT = "https://api.openai.com/v1/chat/completions"
 
     def __init__(self, api_key: str, models: dict[Tier, str] | None = None,
-                 *, max_attempts: int = 3):
-        if not api_key:
+                 *, max_attempts: int = 3, base_url: str | None = None,
+                 metered: bool = True):
+        if not api_key and metered:
             raise ValueError("OpenAIProvider needs an API key")
-        self._key = api_key
+        self._key = api_key or "unused-local-key"
         self.models = dict(DEFAULT_MODELS if models is None else models)
         self.max_attempts = max_attempts
+        self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self.ENDPOINT = f"{self.base_url}/chat/completions"
+        self.metered = metered
+
+    @property
+    def _token_field(self) -> str:
+        """Which spelling of the output cap this endpoint accepts.
+
+        The gpt-5 family rejects max_tokens outright and requires
+        max_completion_tokens. Most OpenAI-compatible servers implement the
+        older name and some have never heard of the newer one. Keyed off the
+        host rather than the model, because it is the server that decides which
+        field it will parse.
+
+        Matched on the parsed hostname rather than by searching the whole URL
+        for the string. A substring test says yes to
+        http://evil.test/?x=api.openai.com and to a corporate proxy at
+        api.openai.com.internal.example, and says no to Azure OpenAI, which
+        needs the newer spelling and lives on a different host entirely.
+        """
+        from urllib.parse import urlsplit
+
+        host = (urlsplit(self.base_url).hostname or "").lower()
+        official = host == "api.openai.com"
+        azure = host.endswith(".openai.azure.com")
+        return "max_completion_tokens" if official or azure else "max_tokens"
 
     def complete(self, system: str, user: str, tier: Tier, budget: Budget,
                  *, max_output: int = 2000, reasoning: str = "low") -> Completion:
         model = self.models[tier]
         thinks = model.startswith(REASONING_MODELS)
-        allowance = max_output + (REASONING_HEADROOM if thinks else 0)
+        # Headroom for anything that reasons before it answers, and for every
+        # unmetered model whether it does or not. The hosted reasoning families
+        # are known by name; a local one is called whatever its author felt
+        # like, and a Qwen or DeepSeek build that thinks will spend the whole
+        # allowance doing it and return an empty string that reads exactly like
+        # a refusal. Local tokens cost nothing, so the generous default is free.
+        allowance = max_output + (REASONING_HEADROOM
+                                  if thinks or not self.metered else 0)
 
         # Four characters to a token is the usual rough guide and it is close
         # enough for a guard that only has to be conservative. The guard prices
@@ -190,11 +243,9 @@ class OpenAIProvider:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            # The gpt-5 family takes max_completion_tokens and rejects the
-            # older max_tokens outright.
-            "max_completion_tokens": allowance,
+            self._token_field: allowance,
         }
-        if thinks:
+        if thinks and self.metered:
             # Kept low on purpose. These seats want judgement rather than long
             # deliberation, and the reasoning is the expensive part.
             body["reasoning_effort"] = reasoning

@@ -104,6 +104,16 @@ class Report:
     ledger_head: str
     seconds: float
     halted: str = ""
+    # Agents that never returned an answer, for any reason: the provider
+    # refused them, they ran out of steps, or the budget stopped them.
+    #
+    # Carried on the report because without it a caller cannot tell a review
+    # that found nothing from a review that never happened. Both produce zero
+    # findings and an empty `halted`, and one of them is a codebase with no
+    # defects while the other is a codebase nobody read. A gate that cannot
+    # separate those reports success for work it did not do.
+    agent_failures: int = 0
+    agents_run: int = 0
     # What the boundary probe found. Carried in the report rather than left in
     # the event stream, so a headless caller reading nothing but the returned
     # object still learns whether the limits held.
@@ -349,6 +359,12 @@ class Orchestrator:
         # Verifiers settle their own finding the moment its panel completes, so
         # two threads can reach the same finding at once. One decision each.
         self._settle_lock = threading.Lock()
+        # Every agent that started and every one that failed to answer. Written
+        # from every worker thread, so it is counted under a lock like the
+        # ledger is.
+        self._tally_lock = threading.Lock()
+        self._agents_run = 0
+        self._agent_failures = 0
         self.toolbox = Toolbox(self.workspace, policy, ledger)
         # Taken from the policy rather than hardcoded, so a tool added to the
         # policy is recognised on the wire without a second edit here.
@@ -383,6 +399,8 @@ class Orchestrator:
         """
         tools = self.toolbox.for_agent(agent_id)
         transcript = opening
+        with self._tally_lock:
+            self._agents_run += 1
         for step in range(max_steps):
             try:
                 reply = self.provider.complete(
@@ -390,9 +408,11 @@ class Orchestrator:
                 )
             except BudgetExceeded as exc:
                 self.emit("agent_halted", agent=agent_id, reason=str(exc))
+                self._failed(agent_id, "budget", str(exc))
                 return None
             except RuntimeError as exc:
                 self.emit("agent_error", agent=agent_id, reason=str(exc)[:200])
+                self._failed(agent_id, "provider", str(exc))
                 return None
 
             self.emit("agent_thought", agent=agent_id, step=step,
@@ -445,7 +465,21 @@ class Orchestrator:
             )
 
         self.emit("agent_exhausted", agent=agent_id, steps=max_steps)
+        self._failed(agent_id, "exhausted", f"used all {max_steps} steps")
         return None
+
+    def _failed(self, agent_id: str, kind: str, detail: str) -> None:
+        """One agent gave no answer. Counted, and written down.
+
+        The ledger entry matters as much as the count. A run that reports a
+        clean result while its record shows six agents dying on provider errors
+        is a run someone can catch, and the whole argument here is that the
+        record outlives whatever the process claimed at the time.
+        """
+        with self._tally_lock:
+            self._agent_failures += 1
+        self.ledger.append("agent_failed", agent=agent_id, kind=kind,
+                           reason=detail[:300])
 
     # -------------------------------------------------------------- phases
 
@@ -979,6 +1013,7 @@ class Orchestrator:
             tool_calls=self.toolbox.calls, refusals=self.toolbox.refusals,
             ledger_head="", seconds=round(time.time() - started, 1),
             halted=halted, probe=dict(self.probe_summary),
+            agent_failures=self._agent_failures, agents_run=self._agents_run,
         )
         # Closing entry first, then the head. A head published before the last
         # entry covers everything except the line that says how the run ended,
@@ -987,6 +1022,8 @@ class Orchestrator:
         self.ledger.append(
             "run_finished", run_id=run_id, raised=report.raised,
             survived=report.survived, spend_usd=report.spend_usd, halted=halted,
+            agent_failures=report.agent_failures, agents_run=report.agents_run,
+            probe_held=bool(self.probe_summary.get("held")),
         )
         report.ledger_head = self.ledger.head
         self.emit("run_finished", **asdict(report))

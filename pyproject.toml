@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crucible-arena"
+version = "0.1.0"
+description = "Adversarial code review with an enforced boundary and a verifiable record."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Blake Rowlands-Mowle" }]
+keywords = ["code-review", "llm", "agents", "verification", "audit"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+# No dependencies, on purpose. Everything here is the standard library:
+# urllib for the model calls, tomllib for the config, hashlib for the ledger.
+# A tool that runs as a release gate in a locked-down environment is worth more
+# when installing it does not mean auditing forty transitive packages, and a
+# supply chain of zero is a claim that can be checked in one line.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/blakerm/crucible"
+
+[project.scripts]
+crucible = "crucible.cli:main"
+# Importing crucible.server by its real name, which is the point main.py exists
+# to make: started as `python -m crucible.server` the module runs as __main__
+# and a later `from . import server` loads a second copy with its own run
+# registry, so reviews execute and stay invisible to the page that asked for
+# them. A console script cannot make that mistake.
+crucible-server = "crucible.server:serve"
+
+[tool.setuptools]
+packages = ["crucible"]
+
+# The web assets are deliberately not packaged. They sit beside the package
+# rather than inside it, and a package-data glob of "../web/*" escapes the
+# package directory: setuptools either drops it or installs web/ as a
+# top-level directory in site-packages, which is worse than not shipping it.
+# The command line tool is the artefact this installs and it needs none of
+# them; the web interface is the demonstration and it runs from a checkout.
+# Moving web/ inside the package is the real fix and it is a separate change.

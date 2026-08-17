@@ -47,6 +47,18 @@ CODE_EXECUTION_FLAGS = {
 PERMITTED_MODULES = {"pytest", "unittest", "nose2", "green"}
 
 
+def _as_list(value) -> list:
+    """A list from whatever was recorded, refusing to iterate a bare string."""
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)):
+        return [value]
+    try:
+        return list(value)
+    except TypeError:
+        return [value]
+
+
 @dataclass(frozen=True)
 class Decision:
     """The answer, and the sentence shown to whoever is watching."""
@@ -264,6 +276,41 @@ class Policy:
         )
 
     # ---------------------------------------------------------------- display
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Policy":
+        """Rebuild a policy from what a run recorded about itself.
+
+        This is what makes a ledger checkable by someone who was not there. The
+        run writes the policy it ran under into its own first entry, so a
+        reader can reconstruct that policy, replay every recorded call through
+        it, and confirm that the allow and deny decisions in the file are the
+        decisions this policy actually produces. Without it the record says
+        "the boundary refused these" and the only thing backing that up is the
+        word of the process that wrote it.
+        """
+        rules: dict[str, ToolRule] = {}
+        for tool, rule in (data.get("tools") or {}).items():
+            if not isinstance(rule, dict):
+                continue
+            # A bare string where a list belongs iterates per character, so
+            # "D:/work" would rebuild as seven single-letter scopes and the
+            # rule would permit nothing while looking populated.
+            rules[str(tool)] = ToolRule(
+                path_scopes=[Path(p) for p in _as_list(rule.get("path_scopes"))],
+                commands=_as_list(rule.get("commands")),
+                url_hosts=_as_list(rule.get("url_hosts")),
+                # `or` treats a recorded 0 as absent and hands back the 1 MB
+                # default, turning a rule that permitted no bytes at all into
+                # one that permits a megabyte. Only a genuinely missing value
+                # may fall back.
+                max_bytes=int(rule["max_bytes"])
+                if rule.get("max_bytes") is not None else 1_000_000,
+            )
+        return cls(
+            str(data.get("name", "")), rules,
+            description=str(data.get("description", "")),
+        )
 
     def as_dict(self) -> dict:
         """The policy as data, for the run log and for the page that shows it."""

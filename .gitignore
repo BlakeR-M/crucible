@@ -14,3 +14,7 @@ __pycache__/
 .venv/
 .DS_Store
 Thumbs.db
+
+# Benchmark ledgers for runs still in progress. The completed arm-X.json
+# carries every reply anyway, so a half-written run adds nothing.
+bench/results/*-run*.jsonl
