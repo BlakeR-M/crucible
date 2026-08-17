@@ -448,7 +448,7 @@ def regression_checks(tmp: Path) -> None:
 
     reason = _credibility(report)
     check("the run is judged not credible", bool(reason))
-    check("the reason names the failed agents", "never returned" in reason)
+    check("the reason names the failed agents", "did not finish" in reason)
 
     healthy = type(report)(
         run_id="r", task="t", lanes=["one"], raised=0, survived=0, findings=[],
@@ -561,16 +561,34 @@ def regression_checks(tmp: Path) -> None:
     led = Ledger(trunc)
     led.append("run_started", run_id="t1", task="t", workspace=str(work2),
                policy=policy.as_dict(), budget_ceiling_usd=1.0)
-    # A path long enough that the ledger stored its length instead of its text.
-    led.append("tool_call", agent="h", tool="read_file",
-               args={"path": "<812 chars>"})
+    # A truncated payload leaves the path decidable, so the call is replayed
+    # and only its size limit goes unchecked.
+    led.append("tool_call", agent="h", tool="write_scratch",
+               args={"path": str(work2 / ".crucible-scratch" / "n.txt"),
+                     "content": "<812 chars>"})
     led.append("run_finished", run_id="t1", raised=0, survived=0, spend_usd=0.0,
                halted="", agent_failures=0, agents_run=1, probe_held=True)
     result = cli("verify", str(trunc), "--workspace", str(work2))
-    check("an honest record with a truncated argument still verifies",
+    check("a truncated payload still verifies",
           result.returncode == 0, result.stdout)
-    check("and says the call could not be replayed",
-          "could not be replayed" in result.stdout)
+    check("and says the size limit went unchecked",
+          "size limits were not rechecked" in result.stdout)
+
+    # A truncated PATH cannot be re-decided at all, and skipping it silently is
+    # how a forger hides a call from the replay. Fails closed instead.
+    hidden = tmp / "hidden-call.jsonl"
+    led = Ledger(hidden)
+    led.append("run_started", run_id="t2", task="t", workspace=str(work2),
+               policy=policy.as_dict(), budget_ceiling_usd=1.0)
+    led.append("tool_call", agent="h", tool="read_file",
+               args={"path": "<812 chars>"})
+    led.append("run_finished", run_id="t2", raised=0, survived=0, spend_usd=0.0,
+               halted="", agent_failures=0, agents_run=1, probe_held=True)
+    result = cli("verify", str(hidden), "--workspace", str(work2))
+    check("a truncated path makes the call unverifiable and fails the record",
+          result.returncode == 2, result.stdout)
+    check("and says which argument could not be replayed",
+          "COULD NOT BE REPLAYED" in result.stdout)
 
     garbage = tmp / "garbage.jsonl"
     garbage.write_text("{not json at all\n", encoding="utf-8")
@@ -619,6 +637,162 @@ def regression_checks(tmp: Path) -> None:
           result.stdout)
 
 
+class SelectiveProvider:
+    """Answers everyone except the seats named in `fail`.
+
+    Lets a test kill exactly one role and watch what the gate does about it,
+    which is the difference between the two ways the credibility counter was
+    wrong: it failed runs on the one agent whose answer is discarded, and it
+    passed runs that had lost a whole lane.
+    """
+
+    name = "selective"
+    MARKERS = {
+        "planner": "You divide a code review",
+        "hunter": "You are hunting for real defects",
+        "verifier": "You are trying to REFUTE",
+        "prober": "Your lane is the boundary itself",
+    }
+
+    def __init__(self, fail=(), lane_files=("a.py",)):
+        self.fail = set(fail)
+        self.lane_files = lane_files
+
+    def _role(self, system):
+        for role, marker in self.MARKERS.items():
+            if marker in system:
+                return role
+        return "unknown"
+
+    def complete(self, system, user, tier, budget, *, max_output=2000,
+                 reasoning="low"):
+        from crucible.providers import Completion
+
+        role = self._role(system)
+        if role in self.fail:
+            raise RuntimeError("openai 400: no model for the " + role + " seat")
+        if role == "planner":
+            text = json.dumps({"lanes": [{"name": "money", "brief": "money",
+                                          "files": self.lane_files}]})
+        elif role == "hunter":
+            text = json.dumps({"done": True, "findings": []})
+        elif role == "verifier":
+            text = json.dumps({"done": True, "refuted": True,
+                               "confidence": "high", "concrete_failure": "",
+                               "reasoning": "no"})
+        else:
+            text = json.dumps({"done": True, "got_through": [], "notes": "held"})
+        return Completion(text, "stub", 10, 10, 0.0, 0.0)
+
+
+def _run_with(provider, work, ledger):
+    from crucible.ledger import Ledger as _L
+    from crucible.orchestrator import Orchestrator
+
+    return Orchestrator(provider, work, review_policy(work), _L(ledger),
+                        Budget(ceiling_usd=1.0), max_workers=1).run("review")
+
+
+def regression_checks_two(tmp):
+    from crucible.cli import _credibility
+
+    section("regression: the gate counts the agents whose answers are used")
+
+    work = tmp / "roles"
+    (work / "src").mkdir(parents=True)
+    (work / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    report = _run_with(SelectiveProvider(fail={"prober"}), work,
+                       tmp / "prober-died.jsonl")
+    check("a failed boundary agent is recorded", report.probe_agent_failed)
+    check("but is kept out of the blocking count", report.agent_failures == 0)
+    check("the fixed sweep still proves the boundary",
+          report.probe.get("held") is True)
+    check("so a complete review is still credible", _credibility(report) == "")
+
+    # A lane whose files are null raises inside one_lane before the agent loop
+    # is entered, which _failed() never sees.
+    report = _run_with(SelectiveProvider(lane_files=None), work,
+                       tmp / "lane-died.jsonl")
+    check("a worker thread that dies is counted", report.agent_failures >= 1)
+    check("and counts as an agent that did nothing", report.agents_silent >= 1)
+    check("so the run is judged not credible", bool(_credibility(report)))
+    check("the record carries the worker failure",
+          any(e["event"] == "worker_failed"
+              for e in Ledger(tmp / "lane-died.jsonl").entries()))
+
+    section("regression: unmetered cannot be declared over a billed endpoint")
+
+    for host in ("https://api.openai.com/v1",
+                 "https://mine.openai.azure.com/v1",
+                 "https://api.anthropic.com/v1"):
+        try:
+            OpenAIProvider("k", base_url=host, metered=False)
+            check("metered=false is refused for " + host, False, "allowed")
+        except ValueError as exc:
+            check("metered=false is refused for " + host,
+                  "spend ceiling" in str(exc))
+    try:
+        OpenAIProvider("", base_url="http://127.0.0.1:8080/v1", metered=False)
+        check("a local endpoint may still be unmetered", True)
+    except ValueError:
+        check("a local endpoint may still be unmetered", False)
+
+    section("regression: verify survives a malformed record")
+
+    stray = tmp / "stray.jsonl"
+    stray.write_text("null\n[1,2,3]\n", encoding="utf-8")
+    result = cli("verify", str(stray))
+    check("a line that is valid JSON but not an entry exits 2",
+          result.returncode == 2, "got %s" % result.returncode)
+    check("without a traceback", "Traceback" not in result.stderr)
+
+    numeric = Policy.from_dict({
+        "name": "p",
+        "tools": {"read_file": {"path_scopes": [42], "commands": [],
+                                "url_hosts": [], "max_bytes": 10}},
+    })
+    check("a path scope recorded as a number does not crash from_dict",
+          len(numeric.rules["read_file"].path_scopes) == 1)
+
+    section("regression: --workspace has to be the workspace the run used")
+
+    work2 = tmp / "declared"
+    work2.mkdir()
+    other = tmp / "elsewhere"
+    other.mkdir()
+    path = tmp / "declared.jsonl"
+    led = Ledger(path)
+    led.append("run_started", run_id="d1", task="t", workspace=str(work2),
+               policy=review_policy(work2).as_dict(), budget_ceiling_usd=1.0)
+    led.append("run_finished", run_id="d1", raised=0, survived=0, spend_usd=0.0,
+               halted="", agent_failures=0, agents_run=1, probe_held=True)
+    result = cli("verify", str(path), "--workspace", str(other))
+    check("a different workspace is refused rather than silently compared",
+          result.returncode == 2)
+    check("and the mismatch is named", "recorded its workspace" in result.stderr)
+    check("the declared workspace still verifies",
+          cli("verify", str(path), "--workspace", str(work2)).returncode == 0)
+
+    section("regression: verify agrees with run on what blocks")
+
+    breach = tmp / "breach.jsonl"
+    led = Ledger(breach)
+    led.append("run_started", run_id="b1", task="t", workspace=str(work2),
+               policy=review_policy(work2).as_dict(), budget_ceiling_usd=1.0)
+    led.append("run_finished", run_id="b1", raised=2, survived=1, spend_usd=0.1,
+               halted="", agent_failures=0, agents_run=6, probe_held=False)
+    check("a boundary breach exits 2 even when a finding survived",
+          cli("verify", str(breach)).returncode == 2)
+
+    section("regression: the completeness gate turns off out loud")
+
+    off = tmp / "off.toml"
+    off.write_text("[gate]\nrequire_complete = false\n", encoding="utf-8")
+    check("require_complete is read", cfg.load(off).require_complete is False)
+    check("and defaults to on", cfg.Config().require_complete is True)
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -628,6 +802,7 @@ def main() -> None:
         verify_checks(tmp)
         cli_checks(tmp)
         regression_checks(tmp)
+        regression_checks_two(tmp)
     print(f"\n{PASSED} checks passed, {len(FAILED)} failed")
     if FAILED:
         for name in FAILED:

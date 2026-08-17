@@ -1,16 +1,52 @@
 # Crucible
 
-An arena where a fleet of AI agents reviews code in the open, and every finding
-they raise is then attacked by independent verifiers whose job is to destroy it.
-Only findings that survive are reported.
+AI finds bugs. Most of them are wrong. This proves which ones aren't.
 
-The number the interface makes largest is not how many defects were found. It is
-how many of them **survived**, next to how many were raised. A run that raises
-forty-one findings and reports nine is doing the thing correctly.
+Agents review a codebase, and every finding they raise is handed to three
+independent verifiers whose only job is to destroy it. Only survivors are
+reported. The number this makes largest is not how many defects were found, it
+is **how few survived**. A run that raises forty-one findings and reports nine
+is working correctly.
 
 ```
 09 / 41  SURVIVED
 ```
+
+Every agent action is checked against a written policy before it runs, and every
+call and result is written to a hash-chained ledger that someone who does not
+trust you can verify themselves.
+
+---
+
+## Three things it has actually done
+
+**It found a critical sandbox escape in its own policy engine.** Pointed at its
+own source, it reported that the command allowlist checked only the first word
+of a command, so `python -c "..."` handed the process arbitrary code and left
+the sandbox entirely. No shell metacharacter was involved, so the guard standing
+in front of that path never fired. Reproduced, fixed, and the regression test is
+in `tests/test_core.py`. Eight further defects it found in itself are written up
+unfixed in [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md).
+
+**Constrained decoding lifted a 9B local model's defect discovery by 78%.**
+Measured properly: nine planted defects with an answer key, five runs per arm,
+pass marks written down before any number existed. Recovery went from 1.8 to 3.2
+defects per run and from 3 to 7 across the union of runs, while malformed
+replies fell from 12.9% to 0.8%. The reasoning degradation that everyone warns
+about did not appear. Method and raw data in [`bench/`](bench/README.md).
+
+**Ten runs of that model returned zero survivors, including correct findings.**
+The hunters correctly identified real defects and the verifiers destroyed every
+one, because "default to refuted, uncertainty is a refutation" becomes "refute
+everything" for a model uncertain about everything. A confident zero that looks
+exactly like a clean bill of health and means the opposite. This is why the
+verifier seat is configured separately from the rest, and why it is worth
+knowing before putting a small model in it.
+
+**And the tool reviewing this README was reviewed the same way.** Four agents
+over the new command line code, independent verification on each finding, six
+verified defects, all six real. The worst: a run whose agents all failed exited
+0 and printed a clean bill of health.
 
 ---
 
@@ -189,11 +225,84 @@ errors its sibling makes.
 ## Running it
 
 ```bash
-python -m crucible.server
+pip install .
+```
+
+### As a check before something ships
+
+```bash
+crucible init                     # write a starter crucible.toml
+crucible models                   # show the seats and reach the endpoint
+crucible run .                    # review; blocks the pipeline if anything survives
+crucible verify runs/abc.jsonl --workspace .
+```
+
+Exit codes, because the point of a gate is that something downstream reads it:
+
+| code | meaning |
+|---|---|
+| `0` | the run completed and nothing survived verification |
+| `1` | a finding survived every verifier |
+| `2` | the run could not complete, or the configuration is wrong |
+
+The difference between `0` and `2` is the one that matters, and it is the one
+this got wrong first. A run whose agents all died reported success, because
+"found nothing" and "never ran" both produce an empty finding list. A run that
+could not complete has no verdict to give, so every way a run can be hollow now
+fails it: agents that never answered, a planner that produced no lanes, a budget
+that ran out, or a boundary that did not hold.
+
+### Configuration
+
+`crucible.toml`, committed to the repository it reviews, so the same run happens
+on a laptop and in a pipeline. No secrets in it: the key is named, never written.
+
+```toml
+[provider]
+base_url    = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+metered     = true
+
+[models]
+planner  = "gpt-5"
+worker   = "gpt-5-mini"
+verifier = "gpt-5"
+
+[gate]
+fail_on = "survived"
+```
+
+Models are chosen **per seat** rather than once for the run. That is what lets
+the wide fan-out run on hardware you own while the seat where being right
+matters runs on something strong.
+
+### Against your own model
+
+Anything speaking the OpenAI chat API works, which is llama.cpp, Ollama, vLLM
+and LM Studio. It is a base URL, not a second code path.
+
+```toml
+[provider]
+base_url = "http://localhost:8080/v1"
+metered  = false          # priced at nothing, so the ceiling stops refusing a free run
+```
+
+Before trusting a local configuration, point it at the target that has an answer
+key and see what it actually catches:
+
+```bash
+crucible run demo_target --score
+```
+
+### The web interface
+
+```bash
+crucible-server          # or: python main.py
 ```
 
 Then open `http://localhost:8420`. It needs `OPENAI_API_KEY` in the environment
-or in a file named by `CRUCIBLE_ENV_FILE`.
+or in a file named by `CRUCIBLE_ENV_FILE`. `CRUCIBLE_OFFLINE=1` runs the whole
+thing, orchestrator and policy and ledger included, without spending anything.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -223,15 +332,28 @@ a weaker argument. Every line that serves this can be read.
 ## Tests
 
 ```bash
-python tests/test_core.py
-python tests/test_orchestrator.py
+python tests/test_core.py          # 71
+python tests/test_orchestrator.py  # 120
+python tests/test_chat.py          # 134
+python tests/test_archive.py       # 102
+python tests/test_cli.py           # 97
 ```
 
-87 checks, no network, no spend. The orchestrator suite replaces the model with
-a stand-in that answers from the prompt it is given, because a queue of canned
-replies handed out to concurrent agents would pass or fail by luck.
+**524 checks, no network, no spend.** The orchestrator suite replaces the model
+with a stand-in that answers from the prompt it is given, because a queue of
+canned replies handed out to concurrent agents would pass or fail by luck.
 
 What they actually cover, beyond the happy path:
+
+- a forgery whose hash chain has been **correctly rebuilt**, which the chain
+  alone cannot catch and only the policy replay can
+- a forgery that also rewrites the recorded policy, which passes the
+  self-reported replay and fails against `--workspace`. That limitation is
+  asserted as a test rather than hidden
+- a run whose planner succeeds and whose every other agent dies, which must
+  exit 2 rather than 0
+- a malformed config exiting 2 rather than 1, because 1 means a finding
+  survived and a typo must not look like a review result
 
 - path traversal, prefix-sibling directories, chained shell commands, lookalike
   hostnames, and a checker that throws
@@ -264,6 +386,33 @@ What they actually cover, beyond the happy path:
 - **Findings are not fixes.** The arena reports what it can defend, and stops
   there. Generating a correct fix for a hard defect is a materially harder task
   than recognising one.
+- **`verify` trusts the file's own policy unless told otherwise.** The record
+  carries the policy the run declared, so a forger who rewrites the record can
+  rewrite the rules it will be judged against. The replay then shows internal
+  consistency rather than that the limits were real. `--workspace` rebuilds the
+  policy independently and is the only configuration in which the check is
+  adversarial. The default output says so in as many words.
+- **The local-model measurements are one model on one target.** Five runs per
+  arm with pass marks fixed in advance is enough to act on and not enough to
+  generalise. The defensible sentence is "on this target, with this model".
+
+---
+
+## Measuring it
+
+The claim that any of this works is checkable rather than asserted, because the
+target carries nine defects with a known answer key.
+
+```bash
+python -m bench.run_bench --arm A --runs 5   # prompted only
+python -m bench.run_bench --arm B --runs 5   # constrained decoding
+python -m bench.run_bench --compare
+```
+
+Every raw reply is saved, so any measure added later is applied to both arms by
+the same code on the same day, and the saved runs stay checkable by anyone who
+wants to disagree with the arithmetic. Method, pass marks and the reasons for
+each in [`bench/README.md`](bench/README.md).
 
 ---
 

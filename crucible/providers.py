@@ -193,6 +193,30 @@ class OpenAIProvider:
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
         self.ENDPOINT = f"{self.base_url}/chat/completions"
         self.metered = metered
+        if not metered:
+            self._refuse_unmetered_billed_host()
+
+    # Hosts that certainly charge for tokens. Declaring a run unmetered turns
+    # the spend ceiling off completely, since every price becomes zero and
+    # BudgetExceeded can never fire, and the declaration is otherwise taken on
+    # trust. One transposed line in a config file, `metered = false` left over
+    # from a local experiment above a base_url pointing back at a vendor, and
+    # the only limit on the run is how long someone leaves it running.
+    BILLED_HOSTS = ("api.openai.com", "api.anthropic.com", "api.mistral.ai",
+                    "api.groq.com", "api.deepseek.com", "api.together.xyz",
+                    "openrouter.ai", "generativelanguage.googleapis.com")
+    BILLED_SUFFIXES = (".openai.azure.com", ".api.cognitive.microsoft.com")
+
+    def _refuse_unmetered_billed_host(self) -> None:
+        from urllib.parse import urlsplit
+
+        host = (urlsplit(self.base_url).hostname or "").lower()
+        if host in self.BILLED_HOSTS or host.endswith(self.BILLED_SUFFIXES):
+            raise ValueError(
+                f"'{host}' bills for tokens, and metered = false switches the "
+                f"spend ceiling off entirely. Remove metered = false, or point "
+                f"[provider] base_url at the endpoint you actually meant."
+            )
 
     @property
     def _token_field(self) -> str:

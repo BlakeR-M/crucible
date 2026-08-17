@@ -39,6 +39,11 @@ from .providers import Budget, OpenAIProvider, Tier
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# The arguments a policy decision actually turns on. A truncated one of these
+# makes a recorded call impossible to re-decide; a truncated anything else
+# costs only the size check.
+DECISION_ARGS = {"path", "command", "url"}
+
 EXIT_CLEAN = 0
 EXIT_SURVIVED = 1
 EXIT_FAILED = 2
@@ -95,12 +100,17 @@ def _credibility(report) -> str:
         return report.halted
     if not report.lanes:
         return "the planner produced no lanes, so nothing was reviewed"
-    if report.agent_failures:
-        return (f"{report.agent_failures} of {report.agents_run} agents never "
-                f"returned an answer, so this review is incomplete")
     if report.probe and not report.probe.get("held"):
         return (f"the enforced boundary did not hold: "
                 f"{report.probe.get('note', 'see the record')}")
+    if report.agent_failures:
+        parts = []
+        if report.agents_silent:
+            parts.append(f"{report.agents_silent} returned nothing at all")
+        if report.agents_exhausted:
+            parts.append(f"{report.agents_exhausted} ran out of steps")
+        return (f"{report.agent_failures} of {report.agents_run} agents did "
+                f"not finish ({'; '.join(parts)}), so this review is incomplete")
     return ""
 
 
@@ -290,7 +300,12 @@ def cmd_run(args) -> int:
     reason = _credibility(report)
     if reason:
         print(f"\n  RUN NOT CREDIBLE: {reason}", file=sys.stderr)
-        return EXIT_FAILED
+        if config.require_complete:
+            return EXIT_FAILED
+        # Opted out in the config, out loud. The verdict below is still
+        # reported, and it is worth as much as the run behind it.
+        print("  [gate] require_complete is off, so this is being reported "
+              "anyway", file=sys.stderr)
     if config.fail_on == "survived" and report.survived:
         return EXIT_SURVIVED
     return EXIT_CLEAN
@@ -322,7 +337,8 @@ def cmd_verify(args) -> int:
     try:
         ledger = Ledger(path)
         entries = ledger.entries()
-    except (ValueError, KeyError, OSError, UnicodeDecodeError) as exc:
+    except (ValueError, KeyError, TypeError, OSError,
+            UnicodeDecodeError) as exc:
         # A record this tool cannot parse is a record it cannot vouch for, and
         # that is a verdict rather than a crash. Left to escape, the traceback
         # exits 1, which the contract reserves for a finding that survived.
@@ -331,6 +347,14 @@ def cmd_verify(args) -> int:
         return EXIT_FAILED
     if not entries:
         print(f"{path} is empty", file=sys.stderr)
+        return EXIT_FAILED
+    # "null" and "[1,2,3]" are valid JSON lines and not ledger entries. Left
+    # alone they reach entry["event"] and leave as a TypeError, which exits 1
+    # and reads to a pipeline as a finding that survived.
+    stray = next((i for i, e in enumerate(entries) if not isinstance(e, dict)), None)
+    if stray is not None:
+        print(f"{path}: line {stray + 1} is not a ledger entry",
+              file=sys.stderr)
         return EXIT_FAILED
 
     print(f"  ledger    {path}")
@@ -355,6 +379,13 @@ def cmd_verify(args) -> int:
         if not workspace.is_dir():
             print(f"no such workspace: {workspace}", file=sys.stderr)
             return EXIT_FAILED
+        recorded = str(started["payload"].get("workspace") or "")
+        if recorded and Path(recorded).resolve() != workspace:
+            print(f"\n  the run recorded its workspace as {recorded}, and you "
+                  f"named {workspace}. A policy built from a different "
+                  f"directory scopes different paths, so the replay would "
+                  f"compare decisions nobody made.", file=sys.stderr)
+            return EXIT_FAILED
         policy = review_policy(workspace)
         trust = "independent, rebuilt from the workspace you named"
     else:
@@ -366,7 +397,7 @@ def cmd_verify(args) -> int:
           f"{len(policy.rules)} permitted tool(s)")
     print(f"  source    {trust}")
 
-    allowed = denied = mismatched = redacted = 0
+    allowed = denied = mismatched = redacted = unverifiable = 0
     problems: list[str] = []
     for entry in entries:
         event = entry["event"]
@@ -375,16 +406,29 @@ def cmd_verify(args) -> int:
         payload = entry["payload"]
         args_recorded = payload.get("args") or {}
         # Long values are stored as "<N chars>" so the ledger stays publishable
-        # and does not become a second copy of whatever the agent handled. That
-        # placeholder is not the argument, and replaying it decides a different
-        # question from the one the run decided: a truncated path resolves
-        # somewhere else entirely and an honest allow would be reported as a
-        # contradiction. Skipped and counted, because a check that cannot be
-        # made is not a check that failed.
-        if any(str(v).startswith("<") and str(v).endswith("chars>")
-               for v in args_recorded.values()):
-            redacted += 1
+        # and does not become a second copy of whatever the agent handled. The
+        # placeholder is not the argument, so replaying it answers a different
+        # question from the one the run answered.
+        #
+        # Which argument was truncated decides what to do about it. The policy
+        # rules on paths, commands and hosts; everything else, `content` above
+        # all, only affects a size limit. Skipping the whole call whenever
+        # anything was truncated let a forger hide a call from the replay
+        # entirely by making one field long, which defeats --workspace. So a
+        # truncated decision-bearing argument makes the call unverifiable and
+        # fails the record, and a truncated payload is noted and replayed.
+        truncated = {k for k, v in args_recorded.items()
+                     if str(v).startswith("<") and str(v).endswith("chars>")}
+        blocking = truncated & DECISION_ARGS
+        if blocking:
+            unverifiable += 1
+            problems.append(
+                f"    entry {entry['seq']}: {', '.join(sorted(blocking))} was "
+                f"truncated in the record, so this call cannot be replayed"
+            )
             continue
+        if truncated:
+            redacted += 1
         decision = policy.check(str(payload.get("tool", "")), dict(args_recorded))
         expected_allowed = event == "tool_call"
         if decision.allowed != expected_allowed:
@@ -403,11 +447,14 @@ def cmd_verify(args) -> int:
     print(f"  replayed  {allowed + denied + mismatched} tool decisions: "
           f"{allowed} allowed, {denied} refused")
     if redacted:
-        print(f"  note      {redacted} call(s) had arguments truncated in the "
-              f"record and could not be replayed at all")
+        print(f"  note      {redacted} call(s) carried a truncated payload, so "
+              f"their size limits were not rechecked")
 
-    if mismatched:
-        print(f"\n  {mismatched} DECISION(S) DO NOT REPRODUCE:")
+    if mismatched or unverifiable:
+        if mismatched:
+            print(f"\n  {mismatched} DECISION(S) DO NOT REPRODUCE:")
+        if unverifiable:
+            print(f"\n  {unverifiable} CALL(S) COULD NOT BE REPLAYED:")
         for line in problems[:12]:
             print(line)
         return EXIT_FAILED
@@ -446,8 +493,12 @@ def cmd_verify(args) -> int:
         print("\n  but the run it describes did not come back clean:")
         for problem in problems:
             print(f"    {problem}")
-        return EXIT_SURVIVED if (survived and not halted and not failures) \
-            else EXIT_FAILED
+        # Same order of precedence cmd_run uses. A record showing the boundary
+        # gave way describes a run whose conditions were not the ones claimed,
+        # which is a failed run rather than a review with a finding in it, and
+        # the two commands must not disagree about the same file.
+        blocked = halted or failures or payload.get("probe_held") is False
+        return EXIT_FAILED if blocked else EXIT_SURVIVED
     return EXIT_CLEAN
 
 

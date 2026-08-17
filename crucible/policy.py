@@ -297,7 +297,11 @@ class Policy:
             # "D:/work" would rebuild as seven single-letter scopes and the
             # rule would permit nothing while looking populated.
             rules[str(tool)] = ToolRule(
-                path_scopes=[Path(p) for p in _as_list(rule.get("path_scopes"))],
+                # str() first: a scope recorded as a number raises TypeError
+                # out of Path(), and from_dict is called while verifying a file
+                # that by definition may be malformed.
+                path_scopes=[Path(str(p))
+                             for p in _as_list(rule.get("path_scopes"))],
                 commands=_as_list(rule.get("commands")),
                 url_hosts=_as_list(rule.get("url_hosts")),
                 # `or` treats a recorded 0 as absent and hands back the 1 MB

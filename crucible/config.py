@@ -62,6 +62,11 @@ class Config:
     ceiling_usd: float = 1.00
     max_workers: int = 6
     fail_on: str = "survived"
+    # Whether a run that could not finish blocks the pipeline. On by default,
+    # because the alternative is a gate that reports success for work it did not
+    # do. Off is a decision a team can make out loud, not one they should reach
+    # by turning the whole check off.
+    require_complete: bool = True
     # Where it came from, for the run header. A report that cannot say which
     # configuration produced it is a report nobody can reproduce.
     source: str = "built-in defaults"
@@ -105,6 +110,39 @@ def find_config(start: Path) -> Path | None:
     return None
 
 
+def _reject_strays(raw: dict, path: Path) -> None:
+    """Refuse a key nobody reads, rather than ignoring it.
+
+    A tightened ceiling written as `celing_usd`, or a `[gate]` block spelled
+    `[gates]`, is dropped in silence and the run proceeds on the default. The
+    author believes the limit is in force, the file says it is, and only the
+    behaviour disagrees. Every other refusal in this module exists for the same
+    reason: a setting that does nothing should say so.
+    """
+    known_sections = {"provider", "run", "gate", "models"}
+    strays = sorted(set(raw) - known_sections)
+    if strays:
+        raise ConfigError(
+            f"{path}: unknown section(s) {', '.join(strays)}. "
+            f"Sections are: {', '.join(sorted(known_sections))}."
+        )
+    known_keys = {
+        "provider": {"base_url", "api_key_env", "metered"},
+        "run": {"task", "ceiling_usd", "max_workers"},
+        "gate": {"fail_on", "require_complete"},
+    }
+    for section, allowed in known_keys.items():
+        block = raw.get(section)
+        if not isinstance(block, dict):
+            continue
+        unknown = sorted(set(block) - allowed)
+        if unknown:
+            raise ConfigError(
+                f"{path}: [{section}] has no setting called "
+                f"{', '.join(unknown)}. Settings are: {', '.join(sorted(allowed))}."
+            )
+
+
 def _table(raw: dict, name: str, path: Path) -> dict:
     """One section, or a refusal naming it.
 
@@ -127,18 +165,40 @@ def _table(raw: dict, name: str, path: Path) -> dict:
 def _number(value, section: str, key: str, cast):
     """A number, or a refusal that names the setting rather than a traceback.
 
-    float("1.00 AUD") and int("6 workers") raise ValueError, and a dict or list
-    from TOML raises TypeError. Neither is a ConfigError, so both escape the
-    handler in main() and end the process with exit code 1, which is the code
-    reserved for a finding surviving verification. A malformed config would
-    then be indistinguishable to a pipeline from a genuine review failure.
+    float("1.00 AUD") and int("6 workers") raise ValueError, a dict or list
+    raises TypeError, and int(float("inf")) raises OverflowError. None of them
+    is a ConfigError, so each escapes the handler in main() and ends the process
+    with exit code 1, the code reserved for a finding surviving verification. A
+    malformed config would then be indistinguishable to a pipeline from a
+    genuine review failure.
+
+    Booleans are refused rather than cast. TOML has a real boolean type and
+    Python's bool is an int, so `max_workers = true` becomes 1 and runs the
+    whole review serially without a word. A setting that means something else
+    entirely should say so instead of quietly working.
+
+    Non-finite values are refused for a sharper reason. `ceiling_usd = nan` gets
+    past a `<= 0` guard, because every comparison against NaN is False, and then
+    every comparison inside the budget is False too: the ceiling stops
+    refusing anything and the run has no spend limit at all.
     """
+    import math
+
+    if isinstance(value, bool):
+        raise ConfigError(
+            f"[{section}] {key} must be a number, found the boolean {value!r}"
+        )
     try:
-        return cast(value)
-    except (TypeError, ValueError) as exc:
+        number = cast(value)
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ConfigError(
             f"[{section}] {key} must be a number, found {value!r}"
         ) from exc
+    if not math.isfinite(number):
+        raise ConfigError(
+            f"[{section}] {key} must be a finite number, found {value!r}"
+        )
+    return number
 
 
 def _models_from(raw: dict, base: dict) -> dict:
@@ -181,6 +241,7 @@ def load(path: Path | None) -> Config:
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path} is not valid TOML: {exc}") from exc
 
+    _reject_strays(raw, path)
     provider = _table(raw, "provider", path)
     run = _table(raw, "run", path)
     gate = _table(raw, "gate", path)
@@ -205,6 +266,8 @@ def load(path: Path | None) -> Config:
     if "max_workers" in run:
         config.max_workers = max(1, _number(run["max_workers"], "run",
                                             "max_workers", int))
+    if "require_complete" in gate:
+        config.require_complete = bool(gate["require_complete"])
     if "fail_on" in gate:
         mode = str(gate["fail_on"]).strip().lower()
         if mode not in FAIL_MODES:
@@ -252,4 +315,9 @@ max_workers = 6
 # "survived" exits non-zero when a finding survived every verifier, so a
 # pipeline can block on it. "never" reports without blocking.
 fail_on = "survived"
+
+# A run that could not finish exits 2 rather than reporting its empty finding
+# list as a pass. Turn this off only deliberately: with it off, a review whose
+# agents all died is indistinguishable from a clean one.
+require_complete = true
 """

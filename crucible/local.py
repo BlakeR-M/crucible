@@ -5,8 +5,11 @@ Two reasons this exists rather than a flag on the OpenAI provider.
 The first is money. Every other provider is priced per token against a rate
 table, and an unknown model deliberately prices at the most expensive known
 rate so that adding one cannot silently disable the budget ceiling. A local
-model genuinely costs nothing, so it registers a zero rate for itself rather
-than inheriting a guard that would refuse the first call of a free run.
+model genuinely costs nothing, so it declares itself unmetered and the Budget
+it is handed prices every call at zero. That belongs on the run rather than on
+the model's name: an earlier version wrote zero rates into the module-level
+table instead, which could not zero a name already priced and never undid
+itself.
 
 The second is the experiment this was written for. llama.cpp will accept a JSON
 schema alongside the prompt, compile it to a grammar, and refuse to sample any
@@ -46,7 +49,8 @@ class LocalProvider(OpenAIProvider):
                  temperature: float = 0.7, seed: int = 1234):
         # Skips OpenAIProvider.__init__ only in that it tolerates no key.
         super().__init__(UNUSED_KEY, models={t: model for t in Tier},
-                         max_attempts=max_attempts)
+                         max_attempts=max_attempts, base_url=base_url,
+                         metered=False)
         self.ENDPOINT = base_url.rstrip("/") + "/v1/chat/completions"
         self.model = model
         # A callable taking the system prompt and returning a JSON schema, or

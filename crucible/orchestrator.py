@@ -104,16 +104,28 @@ class Report:
     ledger_head: str
     seconds: float
     halted: str = ""
-    # Agents that never returned an answer, for any reason: the provider
-    # refused them, they ran out of steps, or the budget stopped them.
+    # Agents that never returned an answer. Carried on the report because
+    # without it a caller cannot tell a review that found nothing from a review
+    # that never happened: both produce zero findings and an empty `halted`, and
+    # one is a codebase with no defects while the other is a codebase nobody
+    # read. A gate that cannot separate those reports success for work it did
+    # not do.
     #
-    # Carried on the report because without it a caller cannot tell a review
-    # that found nothing from a review that never happened. Both produce zero
-    # findings and an empty `halted`, and one of them is a codebase with no
-    # defects while the other is a codebase nobody read. A gate that cannot
-    # separate those reports success for work it did not do.
+    # Counted here are the agents whose answers the run actually uses: the
+    # planner, the hunters and the verifiers. The boundary probe is counted
+    # separately and deliberately, because probe() throws its model agent's
+    # answer away and settles the verdict from a fixed sweep instead. Counting
+    # it here made the one agent contributing nothing to the report the one
+    # agent able to block a pipeline.
     agent_failures: int = 0
     agents_run: int = 0
+    # Agents that did no work at all, as against agents that worked and did not
+    # converge. Reported apart because they mean different things: a provider
+    # error read no code, while an exhausted hunter read plenty and lost its
+    # findings on the way out.
+    agents_silent: int = 0
+    agents_exhausted: int = 0
+    probe_agent_failed: bool = False
     # What the boundary probe found. Carried in the report rather than left in
     # the event stream, so a headless caller reading nothing but the returned
     # object still learns whether the limits held.
@@ -365,6 +377,9 @@ class Orchestrator:
         self._tally_lock = threading.Lock()
         self._agents_run = 0
         self._agent_failures = 0
+        self._agents_silent = 0
+        self._agents_exhausted = 0
+        self._probe_agent_failed = False
         self.toolbox = Toolbox(self.workspace, policy, ledger)
         # Taken from the policy rather than hardcoded, so a tool added to the
         # policy is recognised on the wire without a second edit here.
@@ -475,11 +490,42 @@ class Orchestrator:
         clean result while its record shows six agents dying on provider errors
         is a run someone can catch, and the whole argument here is that the
         record outlives whatever the process claimed at the time.
+
+        The boundary probe is counted apart from the rest. Its model agent is
+        the one whose answer this class explicitly discards, because probe()
+        settles the boundary verdict from a fixed sweep and keeps the agent only
+        for routes nobody enumerated. Rolling its exhaustion into the number a
+        gate reads made a complete review with a proven boundary fail, on the
+        strength of the one agent the report never consults.
         """
         with self._tally_lock:
-            self._agent_failures += 1
+            if agent_id == PROBE_AGENT:
+                self._probe_agent_failed = True
+            else:
+                self._agent_failures += 1
+                if kind == "exhausted":
+                    self._agents_exhausted += 1
+                else:
+                    self._agents_silent += 1
         self.ledger.append("agent_failed", agent=agent_id, kind=kind,
                            reason=detail[:300])
+
+    def _worker_died(self, phase: str, exc: BaseException) -> None:
+        """A worker thread that raised before or around its agent.
+
+        _failed only fires inside the agent loop, so anything that throws in the
+        code around it, building the opening prompt, emitting an event, writing
+        a finding, was recorded to the ledger and counted nowhere. A whole lane
+        could be lost and the run still described itself as complete, which is
+        the same hole the failure counter was added to close, reached by a
+        different door.
+        """
+        detail = f"{type(exc).__name__}: {exc}"
+        with self._tally_lock:
+            self._agent_failures += 1
+            self._agents_silent += 1
+        self.emit("worker_failed", phase=phase, reason=detail[:200])
+        self.ledger.append("worker_failed", phase=phase, reason=detail[:300])
 
     # -------------------------------------------------------------- phases
 
@@ -569,6 +615,7 @@ class Orchestrator:
                           failure_scenario=finding.failure_scenario)
             self.emit("agent_finished", agent=agent_id, found=len(produced))
 
+        phase = "hunt"
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             futures = [pool.submit(one_lane, i, lane) for i, lane in enumerate(lanes)]
             for future in as_completed(futures):
@@ -579,9 +626,7 @@ class Orchestrator:
                 try:
                     future.result()
                 except Exception as exc:  # noqa: BLE001
-                    self.emit("worker_failed", reason=f"{type(exc).__name__}: {exc}"[:200])
-                    self.ledger.append("worker_failed",
-                                       reason=f"{type(exc).__name__}: {exc}"[:300])
+                    self._worker_died(phase, exc)
         return findings
 
     def _source_around(self, finding: Finding, span: int = 45) -> str:
@@ -722,6 +767,7 @@ class Orchestrator:
             if complete:
                 self._settle(finding)
 
+        phase = "verify"
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             futures = [pool.submit(one_verdict, f, n) for f, n in jobs]
             for future in as_completed(futures):
@@ -732,9 +778,7 @@ class Orchestrator:
                 try:
                     future.result()
                 except Exception as exc:  # noqa: BLE001
-                    self.emit("worker_failed", reason=f"{type(exc).__name__}: {exc}"[:200])
-                    self.ledger.append("worker_failed",
-                                       reason=f"{type(exc).__name__}: {exc}"[:300])
+                    self._worker_died(phase, exc)
 
         # Anything the pool failed to complete a panel for still has to be
         # decided, and decided against, since an unjudged finding must never
@@ -1014,6 +1058,9 @@ class Orchestrator:
             ledger_head="", seconds=round(time.time() - started, 1),
             halted=halted, probe=dict(self.probe_summary),
             agent_failures=self._agent_failures, agents_run=self._agents_run,
+            agents_silent=self._agents_silent,
+            agents_exhausted=self._agents_exhausted,
+            probe_agent_failed=self._probe_agent_failed,
         )
         # Closing entry first, then the head. A head published before the last
         # entry covers everything except the line that says how the run ended,
