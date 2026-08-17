@@ -36,13 +36,9 @@ from .ledger import Ledger
 from .orchestrator import Orchestrator
 from .policy import Policy, review_policy
 from .providers import Budget, OpenAIProvider, Tier
+from .tools import DECISION_ARGS
 
 ROOT = Path(__file__).resolve().parent.parent
-
-# The arguments a policy decision actually turns on. A truncated one of these
-# makes a recorded call impossible to re-decide; a truncated anything else
-# costs only the size check.
-DECISION_ARGS = {"path", "command", "url"}
 
 EXIT_CLEAN = 0
 EXIT_SURVIVED = 1

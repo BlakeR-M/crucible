@@ -785,6 +785,30 @@ def regression_checks_two(tmp):
     check("a boundary breach exits 2 even when a finding survived",
           cli("verify", str(breach)).returncode == 2)
 
+
+    section("regression: the record keeps what a decision turns on")
+
+    from crucible.tools import DECISION_ARG_CHARS, MAX_ARG_CHARS, Toolbox
+
+    long_path = "C:" + chr(92) + ("verylongdirectory" + chr(92)) * 40 + "f.py"
+    long_cmd = "pytest " + " ".join("-k test_%d" % i for i in range(80))
+    long_body = "x" * 5000
+    check("the fixture really is longer than the payload limit",
+          len(long_path) > MAX_ARG_CHARS and len(long_cmd) > MAX_ARG_CHARS)
+
+    recorded = Toolbox._safe_args({"path": long_path, "command": long_cmd,
+                                   "content": long_body})
+    check("a long path is kept whole so the call stays replayable",
+          recorded["path"] == long_path)
+    check("a long command is kept whole too",
+          recorded["command"] == long_cmd)
+    check("a long payload is still reduced to its length",
+          recorded["content"] == "<5000 chars>")
+
+    huge = Toolbox._safe_args({"path": "y" * (DECISION_ARG_CHARS + 1)})
+    check("a path past its own ceiling is a payload in disguise and is cut",
+          huge["path"].endswith("chars>"))
+
     section("regression: the completeness gate turns off out loud")
 
     off = tmp / "off.toml"

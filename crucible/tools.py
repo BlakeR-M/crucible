@@ -31,6 +31,14 @@ from .policy import Policy
 
 MAX_CHARS = 24_000
 MAX_MATCHES = 60
+
+# How much of an argument the ledger keeps. Payloads are cut short so the record
+# stays publishable; the arguments a policy decision is made on are kept whole,
+# because a call recorded as its own length can never be re-decided by anyone
+# checking the run afterwards.
+MAX_ARG_CHARS = 300
+DECISION_ARGS = frozenset({"path", "command", "url"})
+DECISION_ARG_CHARS = 4_000
 TEST_TIMEOUT_SECONDS = 120
 SEARCH_TIMEOUT_SECONDS = 10
 SEARCH_LINE_LIMIT = 240
@@ -191,16 +199,29 @@ class Toolbox:
 
     @staticmethod
     def _safe_args(args: dict) -> dict:
-        """Arguments as recorded: long content becomes its length.
+        """Arguments as recorded: long payloads become their length.
 
         The ledger is published with the run. A full file body written into it
         would make the record enormous and would copy whatever the agent was
         handling into a second place.
+
+        The arguments a policy decision turns on are exempt, and that exemption
+        is the whole point rather than a convenience. A record exists so someone
+        can rebuild the policy and re-decide every call in it; a call whose path
+        or command was replaced by its own length cannot be re-decided at all,
+        so truncating those quietly puts holes in the record and calls it
+        complete. Found by running verify over a real run and watching three
+        honest calls come back unverifiable.
+
+        They keep a ceiling of their own, well above any genuine path or
+        command, because an argument long enough to reach it is not a path being
+        recorded but a payload smuggled into a field that escapes truncation.
         """
         recorded = {}
         for key, value in args.items():
             text = str(value)
-            recorded[key] = text if len(text) <= 300 else f"<{len(text)} chars>"
+            limit = DECISION_ARG_CHARS if key in DECISION_ARGS else MAX_ARG_CHARS
+            recorded[key] = text if len(text) <= limit else f"<{len(text)} chars>"
         return recorded
 
     # -------------------------------------------------------------- tools
