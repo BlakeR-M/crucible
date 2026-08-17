@@ -71,7 +71,10 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 }
 .head .wm { font-family: var(--face-display); font-style: italic;
             font-size: var(--t-title); }
-.head .claim { font-size: var(--t-sub); color: var(--ink-muted); }
+/* Named thesis rather than claim: a finding is a .claim, and reusing the word
+   in the masthead put finding styling on the tagline and made every element
+   count disagree with the numbers beside it. */
+.head .thesis { font-size: var(--t-sub); color: var(--ink-muted); }
 .head .id { margin-left: auto; font-size: var(--t-marg); color: var(--ink-faint); }
 
 .split {
