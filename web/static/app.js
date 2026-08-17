@@ -166,9 +166,10 @@ async function readChat(res, mine, thinking, did) {
   if (!answer) mine.append(el('p', 'thinking', 'It had nothing to add.'));
   $('log').scrollTop = $('log').scrollHeight;
 
-  // A run the agent started may not have announced itself through a tool
-  // event, so ask the server directly rather than miss it.
-  if (!S.runId) findRun();
+  // Always ask, never only on the first turn. A visitor who runs a second
+  // review otherwise watches the first one's numbers sitting at "done" while
+  // the new one runs unseen, which is worse than showing nothing.
+  findRun();
 }
 
 async function findRun() {
@@ -176,7 +177,7 @@ async function findRun() {
     const r = await fetch('/api/runs/current');
     if (!r.ok) return;
     const d = await r.json();
-    if (d.run_id) attach(d.run_id);
+    if (d.run_id && d.run_id !== S.runId) attach(d.run_id);
   } catch { /* nothing running is a normal answer */ }
 }
 
@@ -184,6 +185,9 @@ async function findRun() {
 
 function attach(runId) {
   if (S.runId === runId) return;
+  // Close the previous run's stream before opening another, or the old one
+  // keeps pushing events into a board that now belongs to a different run.
+  if (S.source) { try { S.source.close(); } catch { /* already gone */ } }
   reset(runId);
   const source = new EventSource('/api/stream/' + runId);
   S.source = source;
