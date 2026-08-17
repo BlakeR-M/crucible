@@ -1,18 +1,18 @@
-/* Crucible — the run, as a branching conversation.
+/* Crucible.
  *
- * The orchestration is the thing worth watching, so it gets the page. A
- * planner splits the work, examiners fan out and read, and every claim one of
- * them raises opens its own sub-thread of three verifiers whose job is to
- * refute it. Indentation carries the branching: you can see the structure grow
- * without anyone explaining it.
+ * Two panes. On the left you talk to the thing; on the right you watch it
+ * work. The conversation is the front door because a visitor who can ask
+ * "why was that one thrown out" never needs the layout explained to them,
+ * which is the failure every previous version of this page had.
  *
- * An earlier build put the finished certificate first and squeezed all of this
- * into an eleven-pixel strip along the bottom. That was backwards. The
- * certificate is the receipt; the argument is the product.
+ * Across the top of the working pane are three numbers that carry the whole
+ * product: found, disproved, proven. Read left to right they say the
+ * counterintuitive thing out loud, which is that most of what an AI finds is
+ * wrong and the achievement is throwing it away.
  *
- * Red means one thing: refuted, or refused for want of authority. There is no
- * green for success, because a claim that survives is set in plain ink, which
- * is what surviving looks like.
+ * Red means one thing: disproved, or refused for want of authority. There is
+ * no green, because a finding that survives is set in plain ink and that is
+ * what surviving looks like.
  */
 
 :root {
@@ -23,25 +23,22 @@
   --paper-wash:  #F4F1E8;
   --ink:         #14130E;   /* 17.8:1 on paper */
   --ink-muted:   #55524A;   /*  7.5:1 */
-  --ink-faint:   #7C7870;   /*  4.6:1 — machine transcript only */
-  --ink-struck:  #6E6A60;   /*  5.2:1 — refuted text stays readable */
-  --rubric:      #8C1515;   /*  9.0:1 — refuted or refused. Nothing else. */
+  --ink-faint:   #7C7870;   /*  4.6:1 */
+  --ink-struck:  #6E6A60;   /*  5.2:1 */
+  --rubric:      #8C1515;   /*  9.0:1 */
   --rule-hair:   #DAD5C7;
   --rule:        #C0BBAC;
   --rule-strong: #8F897A;
 
-  /* Sitka ships with Windows and carries six optical cuts under separate
-     family names that all map into one variable file, so a real display face
-     and a real text face cost nothing and load nothing. */
   --face-display: "Sitka Display", "Sitka Heading", ui-serif, "Iowan Old Style",
                   Charter, Cambria, "Palatino Linotype", Georgia, serif;
   --face-text: "Sitka Text", ui-serif, "Iowan Old Style", Charter,
-               "Bitstream Charter", Cambria, "Palatino Linotype", Georgia,
-               "Liberation Serif", serif;
-  --face-mono: "Cascadia Mono", ui-monospace, SFMono-Regular, "SF Mono",
-               Consolas, "DejaVu Sans Mono", monospace;
+               "Bitstream Charter", Cambria, "Palatino Linotype", Georgia, serif;
+  --face-mono: "Cascadia Mono", ui-monospace, SFMono-Regular, Consolas,
+               "DejaVu Sans Mono", monospace;
 
-  --t-title: 1.75rem;    /* 28 */
+  --t-huge:  2.5rem;     /* 40 */
+  --t-title: 1.5rem;     /* 24 */
   --t-body:  1.0625rem;  /* 17 */
   --t-sub:   0.9375rem;  /* 15 */
   --t-marg:  0.8125rem;  /* 13 */
@@ -49,146 +46,170 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html { background: var(--paper); }
+html, body { height: 100%; background: var(--paper); }
 body {
-  background: var(--paper); color: var(--ink);
-  font-family: var(--face-text); font-size: var(--t-body); line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-  padding-bottom: 46px;
+  color: var(--ink); font-family: var(--face-text);
+  font-size: var(--t-body); line-height: 1.55;
+  -webkit-font-smoothing: antialiased; overflow: hidden;
 }
 .mono { font-family: var(--face-mono); font-size: .88em;
         font-variant-numeric: tabular-nums lining-nums; }
 .fig { font-variant-numeric: tabular-nums lining-nums; }
 a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 ::selection { background: var(--paper-wash); }
-:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 ::-webkit-scrollbar { width: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--rule); }
+* { scrollbar-width: thin; scrollbar-color: var(--rule) transparent; }
 
-/* ----------------------------------------------------------------- head */
+/* ------------------------------------------------------------------ head */
 
-.head {
-  position: sticky; top: 0; z-index: 5; background: var(--paper);
-  border-bottom: 1px solid var(--rule);
-}
+.head { border-bottom: 1px solid var(--rule); background: var(--paper); }
 .head .in {
-  width: 1000px; max-width: calc(100vw - 40px); margin: 0 auto;
-  height: 46px; display: flex; align-items: baseline; gap: 16px;
+  height: 52px; display: flex; align-items: baseline; gap: 18px;
+  padding: 0 20px;
 }
-.head .wm {
-  font-family: var(--face-display); font-size: var(--t-sub);
-  font-style: italic; color: var(--ink);
+.head .wm { font-family: var(--face-display); font-style: italic;
+            font-size: var(--t-title); }
+.head .claim { font-size: var(--t-sub); color: var(--ink-muted); }
+.head .id { margin-left: auto; font-size: var(--t-marg); color: var(--ink-faint); }
+
+.split {
+  display: grid; grid-template-columns: 430px 1fr;
+  height: calc(100vh - 52px);
 }
-.head .id { font-size: var(--t-marg); color: var(--ink-faint); }
-.head .phase { font-size: var(--t-marg); color: var(--ink-muted); }
-.head .tally { margin-left: auto; font-size: var(--t-marg); color: var(--ink-muted); }
-.head .tally b { font-weight: 400; color: var(--ink); }
-.head .tally .out { color: var(--rubric); }
 
-/* ----------------------------------------------------------------- page */
+/* --------------------------------------------------------------- the talk */
 
-.page { width: 1000px; max-width: calc(100vw - 40px); margin: 0 auto; padding: 26px 0 40px; }
-
-.opening { margin-bottom: 26px; }
-.opening .kicker {
-  font-size: var(--t-note); letter-spacing: .1em; text-transform: uppercase;
-  color: var(--ink-faint); margin-bottom: 6px;
+.talk {
+  border-right: 1px solid var(--rule); min-height: 0;
+  display: grid; grid-template-rows: 1fr auto auto; background: var(--paper);
 }
-.opening h1 {
-  font-family: var(--face-display); font-size: var(--t-title);
-  font-weight: 400; font-style: italic; line-height: 1.2;
-}
-.opening p { font-size: var(--t-sub); color: var(--ink-muted); margin-top: 8px;
-             max-width: 62ch; }
+.log { overflow-y: auto; padding: 18px 20px; }
 
-.choose { margin-top: 20px; max-width: 62ch; }
-.choose label {
-  display: flex; gap: 11px; align-items: baseline; cursor: pointer;
-  padding: 6px 0; border-bottom: 1px solid var(--rule-hair);
+.turn { margin-bottom: 16px; animation: ink .16s ease-out both; }
+@keyframes ink { from { opacity: 0; } }
+.turn .by {
+  font-size: var(--t-note); letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-faint); margin-bottom: 3px;
 }
-.choose label:first-child { border-top: 1px solid var(--rule-hair); }
-.choose input { position: absolute; opacity: 0; pointer-events: none; }
-.choose .m { width: 1.5em; flex: 0 0 auto; color: var(--ink-faint); }
-.choose label.on .m { color: var(--rubric); }
-.choose label.on .t { text-decoration: underline; text-underline-offset: 3px; }
-.choose .d { font-size: var(--t-sub); color: var(--ink-muted); }
+.turn.you .by { color: var(--rule-strong); }
+.turn p { font-size: var(--t-sub); }
+.turn.you p { color: var(--ink-muted); }
+.turn.it p + p { margin-top: 8px; }
 
-button.act {
-  margin-top: 18px; padding: 8px 22px; font-family: var(--face-text);
-  font-size: var(--t-sub); background: var(--paper); color: var(--ink);
+/* What the agent did while answering. Shown, because a visitor watching it go
+   and read the run is watching the thing work. */
+.did { margin: 6px 0 0; }
+.did span {
+  display: block; font-family: var(--face-mono); font-size: var(--t-marg);
+  color: var(--ink-faint); line-height: 1.6;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.did span.no { color: var(--rubric); }
+
+.thinking { font-size: var(--t-sub); color: var(--ink-faint); font-style: italic; }
+
+.ask {
+  display: flex; gap: 9px; align-items: flex-end;
+  padding: 12px 20px; border-top: 1px solid var(--rule-hair);
+}
+.ask textarea {
+  flex: 1; resize: none; max-height: 140px;
+  font-family: var(--face-text); font-size: var(--t-sub); line-height: 1.45;
+  color: var(--ink); background: var(--paper);
+  border: 1px solid var(--rule); padding: 8px 10px;
+}
+.ask textarea:focus { outline: none; border-color: var(--ink); }
+.ask button {
+  font-family: var(--face-text); font-size: var(--t-sub);
+  padding: 8px 16px; background: var(--paper); color: var(--ink);
   border: 1px solid var(--ink); cursor: pointer;
   transition: background .12s ease, color .12s ease;
 }
-button.act:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
-button.act:disabled { border-color: var(--rule); color: var(--ink-faint); cursor: default; }
+.ask button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+.ask button:disabled { border-color: var(--rule); color: var(--ink-faint); cursor: default; }
 
-.notice { border-left: 2px solid var(--rubric); padding-left: 12px;
-          color: var(--rubric); font-size: var(--t-sub); margin: 14px 0; }
+.meter {
+  padding: 0 20px 10px; font-size: var(--t-note); color: var(--ink-faint);
+  font-variant-numeric: tabular-nums lining-nums;
+}
 
-/* ----------------------------------------------------------- the thread */
-/* Indentation carries the branching. The rules are borders rather than box
-   characters so they stay hairline-crisp at any zoom and never wrap. */
+/* --------------------------------------------------------------- the work */
+
+.work { min-height: 0; display: grid; grid-template-rows: auto 1fr auto; }
+
+/* The three numbers. The whole product, read left to right. */
+.score {
+  display: flex; align-items: baseline; gap: 20px;
+  padding: 20px 24px 16px; border-bottom: 1px solid var(--rule-hair);
+}
+.score .n { display: flex; align-items: baseline; gap: 8px; }
+.score .n b {
+  font-family: var(--face-display); font-size: var(--t-huge); font-weight: 400;
+  line-height: 1; font-variant-numeric: tabular-nums lining-nums;
+}
+.score .n span { font-size: var(--t-marg); color: var(--ink-muted); }
+.score .n.out b { color: var(--rubric); }
+.score .arrow { font-size: var(--t-title); color: var(--rule-strong); }
+.score .state {
+  margin-left: auto; font-size: var(--t-marg); color: var(--ink-faint);
+  align-self: center; text-align: right;
+}
+
+.stage { overflow-y: auto; padding: 18px 24px; min-height: 0; }
+
+.idle { max-width: 56ch; color: var(--ink-muted); font-size: var(--t-sub); }
+.idle p { margin-bottom: 8px; }
+.idle b { color: var(--ink); }
+
+/* ------------------------------------------------------------- the thread */
 
 .node { position: relative; }
 .node > .kids {
-  margin-left: 13px; padding-left: 21px;
+  margin-left: 12px; padding-left: 20px;
   border-left: 1px solid var(--rule-hair);
 }
-/* The elbow into each child. */
 .node > .kids > .node::before {
-  content: ""; position: absolute; left: -21px; top: .82em;
-  width: 14px; height: 1px; background: var(--rule-hair);
+  content: ""; position: absolute; left: -20px; top: .8em;
+  width: 13px; height: 1px; background: var(--rule-hair);
 }
 
-.who {
-  display: flex; align-items: baseline; gap: 9px;
-  padding-top: 12px;
-}
+.who { display: flex; align-items: baseline; gap: 9px; padding-top: 11px; }
 .who .dot {
   width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%;
-  background: var(--rule-strong); margin-top: .42em;
+  background: var(--rule-strong); margin-top: .4em;
 }
 .who.live .dot { background: var(--ink); }
 .who.done .dot { background: var(--paper); box-shadow: inset 0 0 0 1px var(--rule-strong); }
-.who .name {
-  font-family: var(--face-display); font-style: italic; font-size: var(--t-body);
-}
+.who .name { font-family: var(--face-display); font-style: italic; }
 .who .role { font-size: var(--t-marg); color: var(--ink-muted); }
-.who .meta {
-  margin-left: auto; font-size: var(--t-note); color: var(--ink-faint);
-  font-variant-numeric: tabular-nums lining-nums; white-space: nowrap;
-}
+.who .meta { margin-left: auto; font-size: var(--t-note); color: var(--ink-faint);
+             font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-.says { font-size: var(--t-sub); color: var(--ink-muted); margin: 3px 0 0 16px;
-        max-width: 78ch; }
-
-/* Machine transcript: what an agent actually did, as opposed to what it said. */
-.acts { margin: 4px 0 2px 16px; }
+.acts { margin: 3px 0 0 16px; }
 .acts .a {
   font-family: var(--face-mono); font-size: var(--t-marg);
-  color: var(--ink-faint); line-height: 1.62;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 82ch;
+  color: var(--ink-faint); line-height: 1.6;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80ch;
 }
 .acts .a b { font-weight: 400; color: var(--ink-muted); }
-.acts .a.no { color: var(--rubric); }
-.acts .a.no b { color: var(--rubric); }
+.acts .a.no, .acts .a.no b { color: var(--rubric); }
 
-/* -------------------------------------------------------------- a claim */
+/* ---------------------------------------------------------------- a claim */
 
 .claim {
-  margin: 9px 0 2px 16px; padding: 10px 14px;
+  margin: 9px 0 2px 16px; padding: 10px 14px; max-width: 78ch;
   background: var(--paper-leaf); border-left: 2px solid var(--rule-strong);
-  max-width: 80ch;
 }
 .claim.trying { border-left-color: var(--ink); }
-.claim.stands { border-left-color: var(--ink); background: var(--paper-wash); }
+.claim.keep   { border-left-color: var(--ink); background: var(--paper-wash); }
 .claim.out    { border-left-color: var(--rubric); }
-
-.claim .t { font-size: var(--t-body); font-weight: 700; line-height: 1.35;
-            display: inline; background-image: linear-gradient(var(--rubric), var(--rubric));
-            background-repeat: no-repeat; background-size: 0% 1.5px;
-            background-position: 0 64%; }
+.claim .t {
+  font-size: var(--t-body); font-weight: 700; line-height: 1.35; display: inline;
+  background-image: linear-gradient(var(--rubric), var(--rubric));
+  background-repeat: no-repeat; background-size: 0% 1.5px; background-position: 0 64%;
+}
 .claim.out .t { background-size: 100% 1.5px; transition: background-size .34s ease-out;
                 color: var(--ink-struck); }
 .claim .where { font-family: var(--face-mono); font-size: var(--t-marg);
@@ -201,73 +222,67 @@ button.act:disabled { border-color: var(--rule); color: var(--ink-faint); cursor
   border-left: 1px solid var(--rule);
 }
 
-.verdict { display: flex; gap: 9px; align-items: baseline; padding-top: 7px; }
-.verdict .n { font-size: var(--t-marg); color: var(--ink-faint); width: 2.4em;
-              flex: 0 0 auto; }
-.verdict .r { font-size: var(--t-sub); color: var(--ink-muted); max-width: 74ch; }
-/* The verifier that actually killed it is the only one in plain ink, so the
-   eye lands on the reason rather than on the tally. */
+.verdict { display: flex; gap: 9px; align-items: baseline; padding-top: 6px; }
+.verdict .n { font-size: var(--t-marg); color: var(--ink-faint); width: 2.3em; flex: 0 0 auto; }
+.verdict .r { font-size: var(--t-sub); color: var(--ink-muted); max-width: 72ch; }
 .verdict.kills .r { color: var(--ink); }
 .verdict.kills .n { color: var(--rubric); }
 
-.ruling {
-  margin: 8px 0 4px 16px; font-size: var(--t-sub);
-  display: flex; gap: 10px; align-items: baseline;
-}
+.ruling { margin: 8px 0 4px 16px; font-size: var(--t-sub);
+          display: flex; gap: 10px; align-items: baseline; }
 .ruling .w { font-family: var(--face-display); font-style: italic; }
 .ruling.out .w { color: var(--rubric); }
 .ruling .c { font-size: var(--t-marg); color: var(--ink-faint); }
 
-/* -------------------------------------------------------------- closing */
+/* --------------------------------------------------------------- closing */
 
-.closing {
-  margin-top: 34px; padding: 18px 20px; background: var(--paper-leaf);
-  max-width: 80ch;
-}
+.closing { margin-top: 26px; padding: 16px 18px; background: var(--paper-leaf);
+           max-width: 78ch; }
 .closing h2 { font-family: var(--face-display); font-style: italic;
-              font-size: var(--t-body); font-weight: 400; margin-bottom: 8px; }
+              font-size: var(--t-body); font-weight: 400; margin-bottom: 7px; }
 .closing p { font-size: var(--t-sub); }
-.closing em { font-style: italic; }
-.closing .rows { margin-top: 12px; padding-top: 10px;
+.closing .rows { margin-top: 11px; padding-top: 9px;
                  border-top: 1px solid var(--rule-hair);
                  font-size: var(--t-marg); color: var(--ink-muted); }
 .closing .rows div { display: flex; gap: 16px; padding: 1px 0; }
 .closing .rows span:last-child { margin-left: auto; }
+.missed { margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--rule-hair);
+          font-size: var(--t-marg); color: var(--ink-muted); }
+.missed b { color: var(--rubric); font-weight: 400; }
 
-/* --------------------------------------------------------------- footer */
+/* ---------------------------------------------------------------- ticker */
 
-.foot {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 4;
-  background: var(--paper); border-top: 1px solid var(--rule);
-}
-.foot .in {
-  width: 1000px; max-width: calc(100vw - 40px); margin: 0 auto;
-  height: 45px; display: flex; align-items: center; gap: 18px;
+.ticker {
+  border-top: 1px solid var(--rule); background: var(--paper);
+  height: 40px; display: flex; align-items: center; gap: 16px; padding: 0 24px;
   font-size: var(--t-marg); color: var(--ink-muted);
+  font-variant-numeric: tabular-nums lining-nums;
 }
-.foot .right { margin-left: auto; display: flex; gap: 18px; }
-.foot .dag { color: var(--rubric); }
+.ticker .right { margin-left: auto; display: flex; gap: 16px; }
+.ticker .dag { color: var(--rubric); }
 
-/* --------------------------------------------------------------- motion */
-
-.in-ink { animation: ink .16s ease-out both; }
-@keyframes ink { from { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) {
-  * { animation-duration: .01ms !important; }
-  .claim.out .t { transition: none; }
-}
+.notice { border-left: 2px solid var(--rubric); padding-left: 11px;
+          color: var(--rubric); font-size: var(--t-sub); margin: 10px 0; }
 
 /* ------------------------------------------------------------ responsive */
 
-@media (max-width: 720px) {
-  :root { --t-title: 1.45rem; --t-body: 1rem; --t-sub: .875rem; }
-  .node > .kids { margin-left: 7px; padding-left: 13px; }
-  .node > .kids > .node::before { left: -13px; width: 8px; }
-  .who .meta { display: none; }
-  .foot .in { gap: 12px; font-size: var(--t-note); }
+@media (max-width: 1080px) {
+  body { overflow: auto; }
+  .split { grid-template-columns: 1fr; height: auto; }
+  .talk { border-right: 0; border-bottom: 1px solid var(--rule); height: 62vh; }
+  .work { height: auto; }
+  .stage { overflow: visible; }
+  .score { flex-wrap: wrap; gap: 14px; }
+  .score .n b { font-size: var(--t-title); }
+  .ticker { position: sticky; bottom: 0; }
+}
+@media (max-width: 620px) {
+  :root { --t-huge: 1.75rem; --t-body: 1rem; --t-sub: .875rem; }
+  .head .claim { display: none; }
+  .head .in { height: 44px; }
 }
 
-/* ----------------------------------------------------------------- login */
+/* ------------------------------------------------------------------ login */
 
 .gate { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .gate form { width: 100%; max-width: 380px; }
@@ -283,5 +298,11 @@ button.act:disabled { border-color: var(--rule); color: var(--ink-faint); cursor
               border-bottom: 1px solid var(--rule-strong);
               font-family: var(--face-mono); font-size: var(--t-sub); color: var(--ink); }
 .gate input:focus { outline: none; border-bottom-color: var(--ink); border-bottom-width: 2px; }
+.gate button.act {
+  margin-top: 18px; padding: 8px 22px; font-family: var(--face-text);
+  font-size: var(--t-sub); background: var(--paper); color: var(--ink);
+  border: 1px solid var(--ink); cursor: pointer;
+}
+.gate button.act:hover { background: var(--ink); color: var(--paper); }
 .gate .fine { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--rule-hair);
               font-size: var(--t-note); color: var(--ink-muted); line-height: 1.7; }

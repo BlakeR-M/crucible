@@ -1,18 +1,17 @@
 /* Crucible, client side.
  *
- * The page is one growing tree. The planner is the root; each examiner is a
- * branch under it; each claim an examiner raises is a branch under that
- * examiner; each verifier's verdict is a leaf under the claim. Nothing moves
- * once it is placed, so the structure of the run is readable at any moment and
- * still readable afterwards.
+ * Two streams feed this page and they are kept apart. The chat stream carries
+ * one turn of conversation and ends; the run stream carries a whole review and
+ * is replayed from the beginning if the connection drops. Neither knows about
+ * the other, which is why the agent can start a run mid-sentence and the right
+ * pane simply begins filling.
  *
- * All state is derived from the event stream, and every event carries its
- * index, so a reconnect that replays the run from the beginning lands in the
- * same place instead of counting everything twice.
+ * All run state is derived from run events, and every one carries its index, so
+ * a reconnect that replays lands in the same place rather than double counting.
  *
  * Text reaches the DOM through textContent only. It is written by language
- * models reading a stranger's code, which is exactly the text that should
- * never be parsed as markup.
+ * models reading a stranger's code, which is exactly the text that should never
+ * be parsed as markup.
  */
 
 const $ = (id) => document.getElementById(id);
@@ -25,116 +24,167 @@ const el = (tag, cls, txt) => {
 
 const S = {
   runId: null, started: 0, timer: null, source: null, seen: -1,
-  agents: new Map(),    // agent id  -> {node, kids, acts, who, meta}
-  claims: new Map(),    // finding id -> {node, kids, box, ruling, seen}
-  raised: 0, stood: 0, out: 0, refused: 0,
+  agents: new Map(), claims: new Map(),
+  found: 0, keep: 0, out: 0, refused: 0,
   calls: 0, reads: 0, spend: 0,
+  talking: false,
 };
 
 const money = (n) => '$' + (n || 0).toFixed(4);
 const short = (p) => !p ? '' : String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
 const ROMAN = ['i', 'ii', 'iii', 'iv', 'v'];
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
-               'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen',
-               'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
-               'nineteen', 'twenty'];
+               'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen',
+               'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
 const say = (n) => (n < WORDS.length ? WORDS[n] : String(n));
 const Say = (n) => { const w = say(n); return w[0].toUpperCase() + w.slice(1); };
 
 function clock() {
   if (!S.started) return;
   const s = Math.floor((Date.now() - S.started) / 1000);
-  $('clock').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  $('tick-clock').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/* A node is a speaker, what it said, what it did, and its children. */
-function node(parentKids, { name, role, live }) {
-  const n = el('div', 'node in-ink');
-  const who = el('div', 'who' + (live ? ' live' : ''));
-  who.append(el('span', 'dot'));
-  who.append(el('span', 'name', name));
-  if (role) who.append(el('span', 'role', role));
-  const meta = el('span', 'meta', '');
-  who.append(meta);
-  const says = el('p', 'says');
-  const acts = el('div', 'acts');
-  const kids = el('div', 'kids');
-  n.append(who, says, acts, kids);
-  parentKids.append(n);
-  return { n, who, meta, says, acts, kids };
-}
+/* ------------------------------------------------------------------ chat */
 
-/* ------------------------------------------------------------------ start */
+function turn(who, cls) {
+  const t = el('div', 'turn ' + cls);
+  t.append(el('div', 'by', who));
+  $('log').append(t);
+  $('log').scrollTop = $('log').scrollHeight;
+  return t;
+}
 
 async function boot() {
   try {
-    const res = await fetch('/api/tasks');
+    const res = await fetch('/api/chat/opening');
     if (res.status === 401) { location.href = '/login'; return; }
-    const data = await res.json();
-    const names = { full: 'The whole codebase', money: 'Money handling and totals',
-                    concurrency: 'Ordering, races and idempotency',
-                    auth: 'Access control and validation' };
-    data.tasks.forEach((task, i) => {
-      const label = el('label', i === 0 ? 'on' : '');
-      const input = el('input');
-      input.type = 'radio'; input.name = 'task'; input.value = task.key;
-      input.checked = i === 0;
-      input.addEventListener('change', () => {
-        document.querySelectorAll('.choose label').forEach(l => l.classList.remove('on'));
-        label.classList.add('on');
-        $('subject').textContent = names[task.key] || task.key;
-      });
-      const t = el('span', 't');
-      t.append(el('span', null, names[task.key] || task.key),
-               el('span', 'd', ' — ' + task.label));
-      label.append(input, el('span', 'm', ROMAN[i] + '.'), t);
-      $('choose').append(label);
-    });
-    $('subject').textContent = names[data.tasks[0].key] || 'The whole codebase';
-    $('state').textContent =
-      `Bounded at ${data.max_concurrent} concurrent runs and ` +
-      `$${data.ceiling_usd.toFixed(2)} of model spend per run`;
+    const d = await res.json();
+    const t = turn('Crucible', 'it');
+    t.append(el('p', null, d.opening));
+    meter(d.spent_usd, d.ceiling_usd);
   } catch (err) {
-    notice('The server could not be reached. ' + err.message);
+    const t = turn('Crucible', 'it');
+    t.append(el('p', 'notice', 'The server could not be reached. ' + err.message));
   }
 }
 
-function notice(text) {
-  $('notice').innerHTML = '';
-  $('notice').append(el('p', 'notice', text));
+function meter(spent, ceiling) {
+  $('meter').textContent =
+    `this conversation has cost ${money(spent)} of its ${money(ceiling)} allowance`;
 }
 
-$('begin').addEventListener('click', async () => {
-  const picked = document.querySelector('input[name=task]:checked');
-  $('begin').disabled = true; $('begin').textContent = 'Starting';
-  $('notice').innerHTML = '';
+$('msg').addEventListener('input', (e) => {
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(140, e.target.scrollHeight) + 'px';
+});
+$('msg').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('ask').requestSubmit(); }
+});
+
+$('ask').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const box = $('msg');
+  const message = box.value.trim();
+  if (!message || S.talking) return;
+  S.talking = true;
+  box.value = ''; box.style.height = 'auto';
+  $('send').disabled = true;
+
+  turn('You', 'you').append(el('p', null, message));
+  const mine = turn('Crucible', 'it');
+  const thinking = el('p', 'thinking', 'thinking');
+  mine.append(thinking);
+  const did = el('div', 'did');
+  mine.append(did);
+
   try {
-    const res = await fetch('/api/run', {
+    const res = await fetch('/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task: picked ? picked.value : 'full' }),
+      body: JSON.stringify({ message }),
     });
     if (res.status === 401) { location.href = '/login'; return; }
-    const data = await res.json();
     if (!res.ok) {
-      notice(data.error || 'The run was refused.');
-      $('begin').disabled = false; $('begin').textContent = 'Begin';
+      const d = await res.json().catch(() => ({}));
+      thinking.remove();
+      mine.append(el('p', 'notice', d.error || 'That was refused.'));
       return;
     }
-    $('choose').style.display = 'none';
-    $('begin').style.display = 'none';
-    S.started = Date.now();
-    S.timer = setInterval(clock, 1000);
-    listen(data.run_id);
+    await readChat(res, mine, thinking, did);
   } catch (err) {
-    notice('Could not start. ' + err.message);
-    $('begin').disabled = false; $('begin').textContent = 'Begin';
+    thinking.remove();
+    mine.append(el('p', 'notice', 'Lost the connection. ' + err.message));
+  } finally {
+    S.talking = false;
+    $('send').disabled = false;
+    box.focus();
   }
 });
 
-/* ----------------------------------------------------------------- stream */
+async function readChat(res, mine, thinking, did) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', answer = null;
 
-function listen(runId) {
-  S.runId = runId;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop();
+    for (const part of parts) {
+      const line = part.split('\n').find(l => l.startsWith('data: '));
+      if (!line) continue;
+      let e; try { e = JSON.parse(line.slice(6)); } catch { continue; }
+
+      if (e.kind === 'chat_tool') {
+        const s = el('span', null, (e.tool || '') +
+          (e.args && Object.keys(e.args).length ? '  ' + Object.values(e.args).join(' ') : ''));
+        did.append(s);
+        // The agent starting a review is the moment the right pane wakes up.
+        if (e.tool === 'start_review' && e.run_id) attach(e.run_id);
+      } else if (e.kind === 'chat_refusal') {
+        did.append(el('span', 'no', 'refused  ' + (e.reason || '')));
+      } else if (e.kind === 'chat_delta') {
+        thinking.remove();
+        if (!answer) { answer = el('p'); mine.append(answer); }
+        answer.textContent += e.text || '';
+        $('log').scrollTop = $('log').scrollHeight;
+      } else if (e.kind === 'chat_answer') {
+        thinking.remove();
+        if (!answer) { answer = el('p'); mine.append(answer); }
+        if (e.text && e.text.length > answer.textContent.length) answer.textContent = e.text;
+      } else if (e.kind === 'chat_error') {
+        thinking.remove();
+        mine.append(el('p', 'notice', e.text || 'Something went wrong.'));
+      } else if (e.kind === 'chat_done') {
+        meter(e.spent_usd, e.ceiling_usd);
+      }
+    }
+  }
+  thinking.remove();
+  if (!answer) mine.append(el('p', 'thinking', 'It had nothing to add.'));
+  $('log').scrollTop = $('log').scrollHeight;
+
+  // A run the agent started may not have announced itself through a tool
+  // event, so ask the server directly rather than miss it.
+  if (!S.runId) findRun();
+}
+
+async function findRun() {
+  try {
+    const r = await fetch('/api/runs/current');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.run_id) attach(d.run_id);
+  } catch { /* nothing running is a normal answer */ }
+}
+
+/* ------------------------------------------------------------------- run */
+
+function attach(runId) {
+  if (S.runId === runId) return;
+  reset(runId);
   const source = new EventSource('/api/stream/' + runId);
   S.source = source;
   source.onmessage = (m) => {
@@ -144,19 +194,30 @@ function listen(runId) {
   };
   source.onerror = () => {
     if (source.readyState === EventSource.CLOSED && S.started) {
-      $('state').textContent = 'Connection closed. Reload to reattach.';
+      $('tick-state').textContent = 'connection closed';
     }
   };
+}
+
+function reset(runId) {
+  S.runId = runId; S.started = Date.now(); S.seen = -1;
+  S.agents.clear(); S.claims.clear();
+  S.found = S.keep = S.out = S.refused = S.calls = S.reads = 0; S.spend = 0;
+  $('idle').style.display = 'none';
+  $('thread').innerHTML = ''; $('closing').innerHTML = '';
+  ['s-found', 's-out', 's-keep'].forEach(id => $(id).textContent = '0');
+  $('runid').textContent = runId.slice(0, 8);
+  clearInterval(S.timer); S.timer = setInterval(clock, 1000);
 }
 
 function handle(e) {
   switch (e.kind) {
     case 'run_started':     return onStart(e);
     case 'phase':           return onPhase(e);
-    case 'lane':            return;
     case 'agent_started':   return onAgent(e);
     case 'agent_thought':   return onThought(e);
     case 'tool':            return onTool(e);
+    case 'probe_result':    return onProbe(e);
     case 'agent_done':
     case 'agent_finished':  return onAgentDone(e);
     case 'agent_exhausted':
@@ -166,55 +227,60 @@ function handle(e) {
     case 'finding_merged':  return onMerged(e);
     case 'verdict':         return onVerdict(e);
     case 'finding_settled': return onSettled(e);
-    case 'run_failed':      return notice(e.reason);
     case 'run_finished':    return onFinished(e);
   }
 }
 
-/* ------------------------------------------------------------------ nodes */
+function node(parentKids, { name, role, live }) {
+  const n = el('div', 'node');
+  const who = el('div', 'who' + (live ? ' live' : ''));
+  who.append(el('span', 'dot'), el('span', 'name', name));
+  if (role) who.append(el('span', 'role', role));
+  const meta = el('span', 'meta', '');
+  who.append(meta);
+  const acts = el('div', 'acts');
+  const kids = el('div', 'kids');
+  n.append(who, acts, kids);
+  parentKids.append(n);
+  return { n, who, meta, acts, kids };
+}
 
 function onStart(e) {
-  $('runid').textContent = e.run_id.slice(0, 8);
-  $('phase').textContent = 'planning';
-
-  const root = node($('thread'), { name: 'Planner', role: 'dividing the work', live: true });
-  root.says.textContent = e.task || '';
+  const root = node($('thread'), { name: 'Planner', role: 'splitting the work', live: true });
+  root.acts.append(mkAct('task', e.task || ''));
   S.agents.set('__planner', root);
+  $('state').textContent = 'running';
+}
 
-  const tools = (e.policy && e.policy.tools) || {};
-  const line = el('div', 'a');
-  line.append(el('b', null, 'authority  '),
-              el('span', null, Object.keys(tools).sort().join(', ') +
-                               ' · network refused'));
-  root.acts.append(line);
-  tally();
+function mkAct(verb, detail, bad) {
+  const a = el('div', 'a' + (bad ? ' no' : ''));
+  a.append(el('b', null, verb + '  '), el('span', null, String(detail)));
+  return a;
 }
 
 function onPhase(e) {
-  const words = { plan: 'planning', hunt: 'reading the code', verify: 'under attack' };
-  $('phase').textContent = words[e.phase] || e.phase;
-  if (e.phase === 'verify') {
-    const p = S.agents.get('__planner');
-    if (p) p.who.classList.remove('live');
-  }
+  const words = { plan: 'splitting the work', hunt: 'reading the code',
+                  verify: 'trying to disprove the findings' };
+  $('tick-state').textContent = words[e.phase] || e.phase;
+  $('state').textContent = words[e.phase] || e.phase;
 }
 
 function onAgent(e) {
-  if (e.role === 'verifier') return;          // verifiers live under their claim
-  if (S.agents.has(e.agent)) return;
+  if (e.role === 'verifier' || S.agents.has(e.agent)) return;
   const planner = S.agents.get('__planner');
   if (!planner) return;
-  const n = node(planner.kids, {
-    name: 'Examiner ' + e.agent.replace('hunter-', ''),
-    role: e.lane || '', live: true,
-  });
-  S.agents.set(e.agent, n);
+  const isProbe = e.agent === 'prober';
+  S.agents.set(e.agent, node(planner.kids, {
+    name: isProbe ? 'Boundary probe' : 'Bug hunter ' + e.agent.replace('hunter-', ''),
+    role: isProbe ? 'testing what it is not allowed to do' : (e.lane || ''),
+    live: true,
+  }));
 }
 
 function onThought(e) {
   S.calls += 1; S.spend += e.cost || 0;
-  $('calls').textContent = S.calls + ' calls';
-  $('spend').textContent = money(S.spend);
+  $('tick-calls').textContent = S.calls + ' calls';
+  $('tick-spend').textContent = money(S.spend);
   const a = S.agents.get(e.agent);
   if (a) a.meta.textContent = 'step ' + ((e.step || 0) + 1);
 }
@@ -222,25 +288,28 @@ function onThought(e) {
 function onTool(e) {
   if (e.refused) {
     S.refused += 1;
-    $('dag').textContent = '† ' + S.refused + ' refused for want of authority';
+    $('tick-dag').textContent = S.refused + ' blocked by policy';
   } else {
     S.reads += 1;
-    $('reads').textContent = S.reads + ' reads';
+    $('tick-reads').textContent = S.reads + ' reads';
   }
-  // A verifier's actions belong to the claim it is judging, so they are shown
-  // there rather than in a lane of their own.
   const owner = S.agents.get(e.agent) || verifierHost(e.agent);
   if (!owner) return;
-  const line = el('div', 'a in-ink' + (e.refused ? ' no' : ''));
-  line.append(el('b', null, (e.refused ? 'refused' : e.tool) + '  '));
-  line.append(el('span', null, e.refused ? (e.reason || '')
-    : (e.args && (short(e.args.path) || e.args.pattern || e.args.command) || '')));
-  owner.acts.append(line);
-  while (owner.acts.children.length > 40) owner.acts.removeChild(owner.acts.firstChild);
+  owner.acts.append(mkAct(
+    e.refused ? 'blocked' : e.tool,
+    e.refused ? (e.reason || '')
+      : (e.args && (short(e.args.path) || e.args.pattern || e.args.command) || ''),
+    e.refused));
+}
+
+function onProbe(e) {
+  const a = S.agents.get('prober');
+  if (!a) return;
+  a.acts.append(mkAct(e.held === false ? 'GOT THROUGH' : 'blocked',
+                      e.attempt || '', true));
 }
 
 function verifierHost(agentId) {
-  // verifier-<findingId>-<n>
   const m = /^verifier-([0-9a-f]+)-\d+$/.exec(agentId || '');
   const c = m && S.claims.get(m[1]);
   return c ? { acts: c.acts } : null;
@@ -248,43 +317,31 @@ function verifierHost(agentId) {
 
 function onAgentDone(e) {
   const a = S.agents.get(e.agent);
-  if (!a) return;
-  a.who.classList.remove('live'); a.who.classList.add('done');
+  if (a) { a.who.classList.remove('live'); a.who.classList.add('done'); }
 }
 
 function onAgentStopped(e) {
   const a = S.agents.get(e.agent);
   if (!a) return;
   a.who.classList.remove('live');
-  const line = el('div', 'a no');
-  line.append(el('b', null, 'stopped  '),
-              el('span', null, e.reason || 'reached its step limit'));
-  a.acts.append(line);
+  a.acts.append(mkAct('stopped', e.reason || 'reached its step limit', true));
 }
 
-/* ----------------------------------------------------------------- claims */
-
 function onRaised(e) {
-  S.raised += 1;
-  const wrap = el('div', 'node in-ink');
+  S.found += 1; $('s-found').textContent = S.found;
+  const wrap = el('div', 'node');
   const box = el('div', 'claim trying');
   box.append(el('span', 't', e.title));
   box.append(el('div', 'where', short(e.file) + (e.line ? ':' + e.line : '') +
-                                '  ' + (e.severity || 'material')));
+                                '  ' + (e.severity || 'medium')));
   box.append(el('p', 'sum', e.summary || ''));
   const acts = el('div', 'acts');
   const kids = el('div', 'kids');
   const ruling = el('div', 'ruling');
-  ruling.append(el('span', 'w', 'under attack'), el('span', 'c', 'three verifiers'));
+  ruling.append(el('span', 'w', 'being attacked'), el('span', 'c', 'three fact-checkers'));
   wrap.append(box, acts, kids, ruling);
-
-  // Attach under the examiner that raised it when we can identify it, else
-  // under the planner, so a claim is never orphaned.
-  const parent = laneHost(e.lane) || S.agents.get('__planner');
-  parent.kids.append(wrap);
-
+  (laneHost(e.lane) || S.agents.get('__planner')).kids.append(wrap);
   S.claims.set(e.id, { wrap, box, kids, acts, ruling, seen: 0, data: e });
-  tally();
 }
 
 function laneHost(lane) {
@@ -299,66 +356,51 @@ function laneHost(lane) {
 function onMerged(e) {
   const drop = S.claims.get(e.dropped);
   if (drop) { drop.wrap.remove(); S.claims.delete(e.dropped); }
-  if (S.raised > 0) S.raised -= 1;
+  if (S.found > 0) { S.found -= 1; $('s-found').textContent = S.found; }
   const keep = S.claims.get(e.into);
   if (keep) {
     keep.corr = (keep.corr || 0) + 1;
     const w = keep.box.querySelector('.where');
-    if (w) w.textContent += '  ·  raised independently by ' + say(keep.corr + 1) + ' examiners';
+    if (w) w.textContent += '  ·  found independently by ' + say(keep.corr + 1) + ' hunters';
   }
-  tally();
 }
 
 function onVerdict(e) {
   const c = S.claims.get(e.finding);
   if (!c) return;
   c.seen += 1;
-  const v = el('div', 'verdict in-ink' + (e.refuted ? ' kills' : ''));
+  const v = el('div', 'verdict' + (e.refuted ? ' kills' : ''));
   v.append(el('span', 'n', '(' + ROMAN[c.seen - 1] + ')'));
-  v.append(el('span', 'r',
-    (e.refuted ? 'Refutes. ' : 'Cannot refute. ') + (e.reasoning || '')));
+  v.append(el('span', 'r', (e.refuted ? 'Disproves it. ' : 'Could not disprove it. ') +
+                           (e.reasoning || '')));
   c.kids.append(v);
-  c.ruling.querySelector('.c').textContent = c.seen + ' of 3 returned';
+  c.ruling.querySelector('.c').textContent = c.seen + ' of 3 back';
 }
 
 function onSettled(e) {
   const c = S.claims.get(e.id);
   if (!c) return;
   c.box.classList.remove('trying');
-  const w = c.ruling.querySelector('.w');
-  const n = c.ruling.querySelector('.c');
+  const w = c.ruling.querySelector('.w'), n = c.ruling.querySelector('.c');
+  const total = e.survived_by + e.refuted_by;
   if (e.survived) {
-    S.stood += 1;
-    c.box.classList.add('stands');
-    w.textContent = 'Stands';
-    n.textContent = e.survived_by + ' of ' + (e.survived_by + e.refuted_by) +
-                    ' could not refute it';
+    S.keep += 1; $('s-keep').textContent = S.keep;
+    c.box.classList.add('keep');
+    w.textContent = 'Proven';
+    n.textContent = e.survived_by + ' of ' + total + ' could not disprove it';
   } else {
-    S.out += 1;
-    c.box.classList.add('out');
-    c.ruling.classList.add('out');
-    w.textContent = 'Refuted';
-    n.textContent = 'destroyed by ' + e.refuted_by + ' of ' +
-                    (e.survived_by + e.refuted_by);
+    S.out += 1; $('s-out').textContent = S.out;
+    c.box.classList.add('out'); c.ruling.classList.add('out');
+    w.textContent = 'Disproved';
+    n.textContent = e.refuted_by + ' of ' + total + ' knocked it down';
   }
-  tally();
 }
-
-function tally() {
-  const t = $('tally');
-  t.innerHTML = '';
-  if (!S.raised) { t.textContent = S.started ? 'nothing raised yet' : ''; return; }
-  t.append(el('span', null, say(S.raised) + ' raised · '));
-  if (S.out) t.append(el('b', 'out', say(S.out)), el('span', null, ' refuted · '));
-  t.append(el('b', null, S.stood ? say(S.stood) : 'none'), el('span', null, ' standing'));
-}
-
-/* ---------------------------------------------------------------- closing */
 
 function onFinished(e) {
   clearInterval(S.timer); clock();
   if (S.source) S.source.close();
-  $('phase').textContent = 'closed';
+  $('state').textContent = 'done';
+  $('tick-state').textContent = 'run complete';
   S.agents.forEach(a => { a.who.classList.remove('live'); a.who.classList.add('done'); });
 
   (e.findings || []).forEach(f => {
@@ -369,40 +411,31 @@ function onFinished(e) {
   });
 
   const killed = e.raised - e.survived;
-  const attrition = e.raised ? Math.round(killed / e.raised * 100) : 0;
-
-  const box = el('div', 'closing in-ink');
+  const box = el('div', 'closing');
   box.append(el('h2', null, 'What survived'));
   const p = el('p');
-  p.append(el('span', null,
-    `${Say(e.lanes ? e.lanes.length : 0)} lines of attack were opened and ` +
-    `${say(e.raised)} claim${e.raised === 1 ? '' : 's'} ` +
-    `${e.raised === 1 ? 'was' : 'were'} raised. `));
-  p.append(el('em', null,
-    `${Say(killed)} ${killed === 1 ? 'was' : 'were'} destroyed under ` +
-    `verification, an attrition of ${attrition} per cent. `));
-  p.append(el('span', null,
-    `${Say(e.survived)} stand${e.survived === 1 ? 's' : ''}, each with a ` +
-    `reproduction you can check.`));
+  p.append(el('span', null, `${Say(e.raised)} possible bug${e.raised === 1 ? '' : 's'} ` +
+    `${e.raised === 1 ? 'was' : 'were'} found. `));
+  p.append(el('em', null, `${Say(killed)} ${killed === 1 ? 'was' : 'were'} disproved and thrown away. `));
+  p.append(el('span', null, `${Say(e.survived)} ${e.survived === 1 ? 'is' : 'are'} left, ` +
+    `each with a reproduction you can check.`));
   box.append(p);
 
   const rows = el('div', 'rows');
   const row = (k, v) => { const d = el('div'); d.append(el('span', null, k), el('span', 'mono', v)); rows.append(d); };
   row('Model spend', money(e.spend_usd) + ' over ' + e.calls + ' calls');
-  row('Actions taken', (e.tool_calls || 0) + ' reads, ' + (e.refusals || 0) + ' refused by policy');
+  row('Actions', (e.tool_calls || 0) + ' reads, ' + (e.refusals || 0) + ' blocked by policy');
   row('Elapsed', e.seconds + 's');
   row('Ledger root', (e.ledger_head || '').slice(0, 24).replace(/(.{4})/g, '$1 ').trim());
   box.append(rows);
 
-  const link = el('p'); link.style.marginTop = '10px'; link.style.fontSize = 'var(--t-marg)';
+  const link = el('p'); link.style.marginTop = '9px'; link.style.fontSize = 'var(--t-marg)';
   const a = el('a', null, 'Download the ledger and verify the chain yourself');
   a.href = '/api/ledger/' + e.run_id;
   link.append(a);
   box.append(link);
 
   $('closing').append(box);
-  $('state').textContent = 'Run closed';
-  if (e.halted) notice('The run stopped early: ' + e.halted);
 }
 
 boot();

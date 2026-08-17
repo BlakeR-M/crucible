@@ -25,9 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from crucible.ledger import Ledger  # noqa: E402
 from crucible.orchestrator import (  # noqa: E402
-    Orchestrator, _as_int, _as_tool_call, _extract_json,
+    PROBE_AGENT, Orchestrator, _as_int, _as_tool_call, _extract_json,
 )
-from crucible.policy import review_policy  # noqa: E402
+from crucible.policy import Policy, ToolRule, review_policy  # noqa: E402
 from crucible.providers import Budget, Completion, Tier  # noqa: E402
 from crucible.tools import Toolbox  # noqa: E402
 
@@ -371,8 +371,12 @@ def policy_checks(tmp: Path) -> None:
           bool(refusals and refusals[0].get("reason")))
     denied = [e for e in ledger.entries() if e["event"] == "tool_denied"]
     check("and was written to the ledger", len(denied) >= 1)
+    # Across every refusal rather than the first one. The boundary probe runs
+    # alongside the hunt and writes its own refusals to the same chain, so which
+    # refusal lands first is a matter of thread timing and never was the thing
+    # this check was about.
     check("the ledger's refusal names the path that was blocked",
-          bool(denied and "win.ini" in json.dumps(denied[0]["payload"])))
+          any("win.ini" in json.dumps(e["payload"]) for e in denied))
     check("the agent kept working after being refused",
           any(e["kind"] == "agent_done" for e in events))
 
@@ -438,6 +442,163 @@ def concurrency_checks(tmp: Path) -> None:
           seqs == list(range(len(seqs))))
 
 
+def probe_checks(tmp: Path) -> None:
+    section("the boundary probe attacks the wall for real")
+    provider = RoleProvider(lanes=1, findings_per_lane=1, verdicts=[True] * 3)
+    orchestrator, events, ledger = build(tmp, provider, name="probe")
+    summary = orchestrator.probe()
+
+    attempts = summary["attempts"]
+    check("all five boundaries are attempted", len(attempts) == 5)
+    check("and each one is a distinct claim",
+          len({a["claim"] for a in attempts}) == 5)
+    check("every attempt is refused", all(a["refused"] for a in attempts))
+    check("nothing got through", summary["breached"] == 0 and summary["held"] is True)
+    check("every refusal carries a reason a person can read",
+          all(a["reason"] for a in attempts))
+
+    # Each refusal has to come from the rule that claims to cover it, rather
+    # than from some unrelated guard that happened to fire first. A probe that
+    # is refused for the wrong reason is testing nothing.
+    reasons = " ".join(a["reason"] for a in attempts)
+    check("the escape is refused for leaving the workspace",
+          "sits outside the scope" in reasons)
+    check("the unlisted command is refused by name",
+          "is not a permitted command" in reasons and "whoami" in reasons)
+    check("the interpreter flag is refused for handing over code",
+          "hands code to" in reasons)
+    check("the network attempt is refused because no such tool exists",
+          "is not in policy" in reasons)
+    check("the escape attempt points at a file that really exists",
+          Path(attempts[0]["args"]["path"]).is_file())
+    check("and the write attempt did not create the file it was refused",
+          not (orchestrator.workspace / "crucible-probe-write.txt").exists())
+
+    check("a permitted call still works, so the refusals mean something",
+          summary["control"]["allowed"] is True)
+
+    section("the probe's refusals reach the ledger")
+    entries = ledger.entries()
+    denied = [e for e in entries
+              if e["event"] == "tool_denied"
+              and e["payload"].get("agent") == PROBE_AGENT]
+    check("every attempt is written to the chain as a refusal", len(denied) >= 5)
+    check("with the reason it was refused for",
+          all(e["payload"].get("reason") for e in denied))
+    check("the lane opens with the claims it intends to test",
+          any(e["event"] == "probe_started" for e in entries))
+    check("and closes with the verdict",
+          any(e["event"] == "probe_result" and e["payload"]["held"] is True
+              for e in entries))
+    check("no breach was recorded",
+          not any(e["event"] == "probe_breach" for e in entries))
+    check("the chain still verifies", ledger.verify() is None)
+
+    section("the probe renders like every other agent")
+    probe_tools = [e for e in events
+                   if e["kind"] == "tool" and e.get("agent") == PROBE_AGENT]
+    check("the lane announces itself in the usual shape",
+          any(e["kind"] == "agent_started" and e.get("agent") == PROBE_AGENT
+              and e.get("role") != "verifier" for e in events))
+    check("the attempts arrive as ordinary tool events",
+          len(probe_tools) >= 6
+          and all("refused" in e and "reason" in e and "args" in e
+                  for e in probe_tools))
+    check("five of them are refusals the page can colour",
+          sum(1 for e in probe_tools if e["refused"]) >= 5)
+    results = [e for e in events if e["kind"] == "probe_result"]
+    check("one probe_result carries the whole attempt list",
+          len(results) == 1 and len(results[0]["attempts"]) == 5)
+    check("and says plainly whether anything got through",
+          results[0]["held"] is True and results[0]["breached"] == 0
+          and bool(results[0]["note"]))
+    check("the lane closes itself", any(e["kind"] == "agent_finished"
+                                        and e.get("agent") == PROBE_AGENT
+                                        for e in events))
+
+    section("the probe alongside a run")
+    provider = RoleProvider(lanes=2, findings_per_lane=1,
+                            verdicts=[False, False, True, True, True, False])
+    orchestrator, events, ledger = build(tmp, provider, name="beside")
+    report = orchestrator.run("t")
+    check("the probe ran as part of the run",
+          any(e["kind"] == "probe_result" for e in events))
+    check("the findings count is what the hunt produced, not what the probe did",
+          report.raised == 2 and report.survived == 1)
+    check("no finding is attributed to the boundary lane",
+          all(f["lane"].startswith("lane-") for f in report.findings))
+    check("the probe stays off the expensive seats",
+          provider.by_tier.get("verifier", 0) == 6
+          and provider.by_tier.get("planner", 0) == 1)
+    check("the report carries the boundary verdict",
+          report.probe["held"] is True and report.probe["breached"] == 0)
+    check("and the probe's refusals are counted in the run's totals",
+          report.refusals >= 5)
+    check("the chain holds with the probe writing beside the hunt",
+          ledger.verify() is None)
+    check("the run still closed last",
+          [e["kind"] for e in events][-1] == "run_finished")
+
+    section("a probe that falls over")
+    provider = RoleProvider(lanes=2, findings_per_lane=1,
+                            verdicts=[False, False, True, True, True, False])
+    orchestrator, events, ledger = build(tmp, provider, name="probefell")
+
+    def explode():
+        raise ValueError("the probe fell over")
+
+    orchestrator.probe = explode
+    report = orchestrator.run("t")
+    check("a probe that fails does not take the run down",
+          report.raised == 2 and report.survived == 1 and not report.halted)
+    check("and is reported as unestablished rather than as a wall that held",
+          report.probe["held"] is False and "fell over" in report.probe["note"])
+    check("and the failure reaches the ledger",
+          any(e["event"] == "probe_failed" for e in ledger.entries()))
+
+    section("a boundary that stops holding is reported, not hidden")
+    provider = RoleProvider(lanes=1, findings_per_lane=1, verdicts=[True] * 3)
+    orchestrator, events, ledger = build(tmp, provider, name="breach")
+    # The wall is taken down on purpose, which is the only honest way to check
+    # that a probe getting through is reported as a failure rather than passing
+    # in silence. Reading is opened onto the directory holding the file the
+    # escape attempt targets, and writing is widened from scratch to the whole
+    # workspace.
+    target = orchestrator._outside_file()
+    wide = Policy("wide", {
+        **review_policy(orchestrator.workspace).rules,
+        "read_file": ToolRule(path_scopes=[target.parent]),
+        "write_scratch": ToolRule(path_scopes=[orchestrator.workspace]),
+    })
+    orchestrator.policy = wide
+    orchestrator.toolbox = Toolbox(orchestrator.workspace, wide, ledger)
+    summary = orchestrator.probe()
+
+    check("a probe that gets through reports a failure",
+          summary["held"] is False)
+    check("and counts every wall that fell", summary["breached"] == 2)
+    check("and names them in words rather than leaving a number",
+          "outside the workspace" in summary["note"]
+          and "scratch" in summary["note"])
+    check("the two walls that fell are the two that were widened",
+          [a["claim"] for a in summary["attempts"] if a["got_through"]]
+          == ["read a file outside the workspace",
+              "write outside the scratch directory"])
+    check("the three that stood are still refused",
+          sum(1 for a in summary["attempts"] if a["refused"]) == 3)
+    check("each breach gets its own ledger entry",
+          sum(1 for e in ledger.entries() if e["event"] == "probe_breach") == 2)
+    check("and the recorded verdict says the wall did not hold",
+          any(e["event"] == "probe_result" and e["payload"]["held"] is False
+              for e in ledger.entries()))
+    # The point of the lane: with the rule gone, the probe really does the thing
+    # the rule existed to prevent. Anything less would be a test of a fixture.
+    check("the write the policy no longer refuses really happened",
+          (orchestrator.workspace / "crucible-probe-write.txt").is_file())
+    check("and the file outside the workspace really was read",
+          any(a["ok"] for a in summary["attempts"] if a["got_through"]))
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -448,6 +609,9 @@ def main() -> None:
         policy_checks(tmp)
         dedupe_checks(tmp)
         concurrency_checks(tmp)
+        # Last, because the breach section deliberately lets a write land in the
+        # shared workspace and nothing after it should have to know that.
+        probe_checks(tmp)
     print(f"\n{PASSED} checks passed, {len(FAILED)} failed")
     if FAILED:
         for name in FAILED:

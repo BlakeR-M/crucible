@@ -16,6 +16,7 @@ import json
 import sys
 from pathlib import Path
 
+from .archive import score_against_key
 from .ledger import Ledger
 from .orchestrator import Orchestrator
 from .policy import review_policy
@@ -24,53 +25,33 @@ from .providers import Budget, provider_from_env
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def score_against_key(report, workspace: Path) -> None:
-    """Compare a run against the demo target's answer key.
+def print_score(report, workspace: Path) -> None:
+    """Show a run against the demo target's answer key.
 
-    Only the demo target has one. Recall is reported per difficulty because an
-    aggregate number hides the thing worth knowing, which is whether the easy
-    defects were found and the hard ones missed or the other way round.
+    The scoring itself lives in archive.py and is shared rather than copied, so
+    a run scored on its way into the archive and the same run scored here
+    cannot disagree about what it caught. This function is only the rendering.
+
+    Recall is printed per difficulty because an aggregate number hides the
+    thing worth knowing, which is whether the easy defects were found and the
+    hard ones missed or the other way round.
     """
-    key_path = workspace / ".answer_key.json"
-    if not key_path.is_file():
+    score = score_against_key(report, workspace)
+    if score is None:
         print("\nNo answer key in this workspace, so nothing to score against.")
         return
-    key = json.loads(key_path.read_text(encoding="utf-8"))
-    planted = key.get("defects", [])
 
-    def matches(defect, finding) -> bool:
-        """Same file, and within twelve lines. Deliberately generous on the
-        line number: a defect reported at the call site rather than the
-        declaration is still the same defect found."""
-        a = Path(defect.get("file", "")).name.lower()
-        b = Path(finding.get("file", "")).name.lower()
-        if a != b:
-            return False
-        return abs(int(defect.get("line") or 0) - int(finding.get("line") or 0)) <= 12
-
-    found, missed = [], []
-    for defect in planted:
-        hit = next((f for f in report.findings if matches(defect, f)), None)
-        (found if hit else missed).append(defect)
-
-    by_difficulty: dict[str, list[int]] = {}
-    for defect in planted:
-        bucket = by_difficulty.setdefault(defect.get("difficulty", "unknown"), [0, 0])
-        bucket[1] += 1
-        if defect in found:
-            bucket[0] += 1
-
-    print(f"\n  scored against {len(planted)} planted defects")
+    print(f"\n  scored against {score['planted']} planted defects")
     for difficulty in ("easy", "medium", "hard"):
-        if difficulty in by_difficulty:
-            hit, total = by_difficulty[difficulty]
-            print(f"    {difficulty:7} {hit}/{total}")
-    print(f"    {'total':7} {len(found)}/{len(planted)}")
-    if missed:
+        row = score["by_difficulty"].get(difficulty)
+        if row:
+            print(f"    {difficulty:7} {row['found']}/{row['planted']}")
+    print(f"    {'total':7} {len(score['found'])}/{score['planted']}")
+    if score["missed"]:
         print("\n  missed:")
-        for defect in missed:
-            print(f"    {defect['id']}  {defect.get('file')}:{defect.get('line')}  "
-                  f"{defect.get('summary', '')[:70]}")
+        for defect in score["missed"]:
+            print(f"    {defect['id']}  {defect['file']}:{defect['line']}  "
+                  f"{defect['summary'][:70]}")
 
 
 def main() -> int:
@@ -146,7 +127,7 @@ def main() -> int:
             print(f"    -> {finding['failure_scenario'][:200]}")
 
     if args.score:
-        score_against_key(report, workspace)
+        print_score(report, workspace)
     return 0
 
 

@@ -47,6 +47,10 @@ TARGET = ROOT / "demo_target"
 MAX_CONCURRENT_RUNS = 2
 RUN_CEILING_USD = float(os.environ.get("CRUCIBLE_RUN_CEILING_USD", "0.60"))
 DAILY_CEILING_USD = float(os.environ.get("CRUCIBLE_DAILY_CEILING_USD", "8.00"))
+# A conversation is cheap per turn but unbounded in turns, so it carries its
+# own ceiling separate from the run's. A visitor who talks all afternoon costs
+# this much and then is told so plainly.
+CHAT_CEILING_USD = float(os.environ.get("CRUCIBLE_CHAT_CEILING_USD", "0.40"))
 SESSION_HOURS = 12
 
 # Railway's edge closes any HTTP request at 15 minutes, streaming or not, and
@@ -95,6 +99,15 @@ class RunRegistry:
     def active(self) -> int:
         with self._lock:
             return sum(1 for r in self._runs.values() if not r["finished"])
+
+    def newest(self) -> str | None:
+        """The most recently started run, finished or not. A browser attaching
+        after the fact still gets the whole thing, because the buffer is
+        replayed from the beginning."""
+        with self._lock:
+            if not self._runs:
+                return None
+            return max(self._runs.values(), key=lambda r: r["started"])["id"]
 
     def create(self, run_id: str) -> dict:
         with self._lock:
@@ -160,6 +173,63 @@ class RunRegistry:
 
 
 REGISTRY = RunRegistry()
+
+
+class ChatSessions:
+    """One conversational agent per visitor, kept for the life of their visit.
+
+    The session cookie proves someone signed in but does not say who: it is a
+    signed expiry, so two visitors who log in during the same second carry the
+    same value. Conversations therefore key off a separate random id, because a
+    visitor must never be handed another visitor's transcript, and the agent
+    will only discuss a run its own session started.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._agents: dict[str, dict] = {}
+
+    def get(self, sid: str):
+        from .chat import ChatAgent, ServerRuns
+
+        with self._lock:
+            held = self._agents.get(sid)
+            if held is not None:
+                held["seen"] = time.time()
+                return held["agent"]
+
+        # Built outside the lock: constructing an agent reads the task list and
+        # there is no reason to hold every other visitor up for it.
+        agent = ChatAgent(
+            provider_from_env(
+                extra_env=Path(os.environ.get("CRUCIBLE_ENV_FILE", ROOT / ".env"))
+            ),
+            ServerRuns(REGISTRY, runs_dir=RUNS, target=TARGET),
+            Budget(ceiling_usd=CHAT_CEILING_USD),
+            session_id=sid,
+        )
+        with self._lock:
+            # Another thread may have built one for this visitor while we were
+            # outside the lock. Theirs wins, so a session keeps one transcript.
+            existing = self._agents.get(sid)
+            if existing is not None:
+                existing["seen"] = time.time()
+                return existing["agent"]
+            self._agents[sid] = {"agent": agent, "seen": time.time()}
+            return agent
+
+    def reap(self, idle_seconds: int = 3600) -> None:
+        with self._lock:
+            cutoff = time.time() - idle_seconds
+            for sid in [k for k, v in self._agents.items() if v["seen"] < cutoff]:
+                del self._agents[sid]
+
+    def count(self) -> int:
+        with self._lock:
+            return len(self._agents)
+
+
+CHATS = ChatSessions()
 
 
 # -------------------------------------------------------------------- auth
@@ -338,6 +408,24 @@ class Handler(BaseHTTPRequestHandler):
             self._file("index.html", "text/html; charset=utf-8")
             return
 
+        if path == "/api/runs/current":
+            # The chat agent can start a review mid-sentence, and the browser
+            # needs to know which run to attach to without the agent having to
+            # remember to announce it.
+            self._json(200, {"run_id": REGISTRY.newest()})
+            return
+
+        if path == "/api/chat/opening":
+            from .chat import ChatAgent  # noqa: F401  (imported for its module)
+
+            agent = CHATS.get(self._sid())
+            self._json(200, {
+                "opening": agent.opening(),
+                "ceiling_usd": CHAT_CEILING_USD,
+                "spent_usd": round(agent.budget.spent_usd, 5),
+            })
+            return
+
         if path == "/api/tasks":
             self._json(200, {"tasks": [{"key": k, "label": v}
                                        for k, v in TASKS.items()],
@@ -374,11 +462,19 @@ class Handler(BaseHTTPRequestHandler):
             user = (form.get("user") or [""])[0]
             password = (form.get("password") or [""])[0]
             if credentials_ok(user, password):
-                self._send(303, b"", "text/plain", {
-                    "Location": "/",
-                    "Set-Cookie": (f"crucible_session={issue_session()}; "
-                                   f"Path=/; HttpOnly; SameSite=Lax; Secure"),
-                })
+                # Two cookies with different jobs. The signed one proves the
+                # visitor got past the gate; the random one says which visitor
+                # they are, so conversations do not bleed between them.
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.send_header("Content-Length", "0")
+                self.send_header("Set-Cookie",
+                                 f"crucible_session={issue_session()}; "
+                                 f"Path=/; HttpOnly; SameSite=Lax; Secure")
+                self.send_header("Set-Cookie",
+                                 f"crucible_sid={secrets.token_urlsafe(18)}; "
+                                 f"Path=/; HttpOnly; SameSite=Lax; Secure")
+                self.end_headers()
             else:
                 # One deliberate second. Not a real defence on its own, but it
                 # takes the sting out of someone walking a password list.
@@ -388,6 +484,24 @@ class Handler(BaseHTTPRequestHandler):
 
         if not self._authed():
             self._json(401, {"error": "not signed in"})
+            return
+
+        if route.path == "/api/chat":
+            try:
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+            except json.JSONDecodeError:
+                self._json(400, {"error": "bad json"})
+                return
+            message = str(payload.get("message", "")).strip()
+            if not message:
+                self._json(400, {"error": "say something"})
+                return
+            # Bounded before it reaches a model. A visitor pasting a novel is
+            # an unbounded prompt on somebody else's key.
+            if len(message) > 2000:
+                self._json(413, {"error": "that message is too long"})
+                return
+            self._chat(self._sid(), message)
             return
 
         if route.path == "/api/run":
@@ -406,6 +520,51 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, b"not found", "text/plain")
 
     # ----------------------------------------------------------- stream
+
+    def _sid(self) -> str:
+        """Which visitor this is. Falls back to the signed cookie so a request
+        that somehow arrives without the random one still gets a conversation
+        rather than an error, and a fresh string rather than a shared one."""
+        return self._cookie("crucible_sid") or f"anon-{secrets.token_urlsafe(12)}"
+
+    def _chat(self, sid: str, message: str) -> None:
+        """One conversational turn, streamed as it happens.
+
+        The agent's tool calls and refusals reach the browser while it is still
+        thinking, which is most of the point: a visitor watching it decide to
+        go and read the run is watching the thing work, not waiting on a
+        spinner.
+        """
+        agent = CHATS.get(sid)
+        CHATS.reap()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.close_connection = True
+        self.end_headers()
+
+        def push(event: dict) -> bool:
+            try:
+                self.wfile.write(f"data: {json.dumps(event)}\n\n".encode("utf-8"))
+                self.wfile.flush()
+                return True
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return False
+
+        try:
+            for event in agent.stream(message):
+                if not push(event):
+                    return
+        except Exception as exc:  # noqa: BLE001 - the visitor must be told
+            push({"kind": "chat_error",
+                  "text": f"{type(exc).__name__}: {exc}"[:300]})
+        finally:
+            push({"kind": "chat_done",
+                  "spent_usd": round(agent.budget.spent_usd, 5),
+                  "ceiling_usd": CHAT_CEILING_USD})
 
     def _stream(self, run_id: str) -> None:
         subscription = REGISTRY.subscribe(run_id)
