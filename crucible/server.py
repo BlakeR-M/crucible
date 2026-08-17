@@ -172,6 +172,23 @@ class RunRegistry:
                 del self._runs[run_id]
 
 
+def pick_provider():
+    """The paid model, or the free stand-in.
+
+    One place decides, so a deployment cannot end up running its reviews for
+    free and its conversations for money. Offline mode is not a mock: the real
+    orchestrator, policy, toolbox and ledger all run, and only the completions
+    are written locally instead of bought.
+    """
+    from .offline import OfflineProvider, enabled
+
+    if enabled():
+        return OfflineProvider()
+    return provider_from_env(
+        extra_env=Path(os.environ.get("CRUCIBLE_ENV_FILE", ROOT / ".env"))
+    )
+
+
 REGISTRY = RunRegistry()
 
 
@@ -201,9 +218,7 @@ class ChatSessions:
         # Built outside the lock: constructing an agent reads the task list and
         # there is no reason to hold every other visitor up for it.
         agent = ChatAgent(
-            provider_from_env(
-                extra_env=Path(os.environ.get("CRUCIBLE_ENV_FILE", ROOT / ".env"))
-            ),
+            pick_provider(),
             ServerRuns(REGISTRY, runs_dir=RUNS, target=TARGET),
             Budget(ceiling_usd=CHAT_CEILING_USD),
             session_id=sid,
@@ -302,9 +317,7 @@ def start_run(task_key: str) -> tuple[str | None, str]:
         ledger = Ledger(RUNS / f"{run_id}.jsonl")
         budget = Budget(ceiling_usd=RUN_CEILING_USD)
         try:
-            provider = provider_from_env(
-                extra_env=Path(os.environ.get("CRUCIBLE_ENV_FILE", ROOT / ".env"))
-            )
+            provider = pick_provider()
             orchestrator = Orchestrator(
                 provider, TARGET, review_policy(TARGET), ledger, budget,
                 emit=lambda event: REGISTRY.publish(run_id, event),
