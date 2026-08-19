@@ -491,6 +491,16 @@ async function repoLimits() {
     const hosts = (d.repo_hosts || []).join(' or ');
     hint(`Public repositories on ${hosts}, up to ${d.repo_max_mb} MB and ` +
          `${d.repo_max_files} files, one commit deep. Add @branch, @tag or @commit to pick a ref.`);
+    if (d.offline) {
+      const note = document.createElement('p');
+      note.className = 'notice';
+      note.id = 'offline-notice';
+      note.textContent = 'This deployment runs the full arena with a stand-in model: the planner, hunters, ' +
+        'verifiers, policy and ledger are real and every completion is scripted, so no findings here ' +
+        'come from a live model. Live model runs switch on when the operator supplies a provider key.';
+      const idle = $('idle');
+      if (idle && !$('offline-notice')) idle.insertBefore(note, idle.firstChild);
+    }
   } catch { /* the field still works without the numbers */ }
 }
 

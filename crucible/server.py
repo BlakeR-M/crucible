@@ -208,6 +208,12 @@ class RunRegistry:
                 del self._runs[run_id]
 
 
+def _offline_enabled() -> bool:
+    from .offline import enabled
+
+    return bool(enabled())
+
+
 def pick_provider():
     """The paid model, or the free stand-in.
 
@@ -542,7 +548,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/healthz":
             self._json(200, {"ok": True, "active": REGISTRY.active(),
-                             "day_spend_usd": round(REGISTRY.day_spend(), 4)})
+                             "day_spend_usd": round(REGISTRY.day_spend(), 4),
+                             "offline": _offline_enabled()})
             return
 
         if path in ("/login", "/login/"):
@@ -598,6 +605,7 @@ class Handler(BaseHTTPRequestHandler):
                              "repo_hosts": list(REPO_HOSTS),
                              "repo_max_mb": REPO_MAX_BYTES / 1_000_000,
                              "repo_max_files": REPO_MAX_FILES,
+                             "offline": _offline_enabled(),
                              "runs": REGISTRY.listing()})
             return
 
