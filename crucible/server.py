@@ -249,16 +249,24 @@ REGISTRY = RunRegistry()
 KEYS = byok.VisitorKeys()
 
 
-def provider_for(sid: str, record: dict | None = None):
+def visitor_record(sid: str) -> dict | None:
+    """The session's attached key record, or None. None whenever the
+    deployment has visitor keys switched off, whatever the table holds."""
+    if not sid or not BYO_ENABLED:
+        return None
+    return KEYS.get(sid)
+
+
+def provider_for(record: dict | None):
     """The provider a session runs on, and what kind it is.
 
-    Order: the visitor's own key when one is attached, else the operator's
-    provider from the environment, else the free stand-in. Returns
-    (provider, kind, models) where kind is "visitor", "operator" or
-    "offline" and models is the per-tier table by tier name; the record is
-    what the ledger header and the stream carry, never the key.
+    Order: the visitor's own key when one is attached (the record from
+    visitor_record), else the operator's provider from the environment, else
+    the free stand-in. Returns (provider, kind, models) where kind is
+    "visitor", "operator" or "offline" and models is the per-tier table by
+    tier name; the record is what the ledger header and the stream carry,
+    never the key.
     """
-    record = record if record is not None else (KEYS.get(sid) if sid else None)
     if record is not None:
         provider = OpenAIProvider(record["key"], dict(record["models"]),
                                   base_url=record["base_url"])
@@ -311,7 +319,7 @@ class ChatSessions:
         # forgets a key mid-conversation keeps their transcript and gets the
         # new provider from the next turn; the provider is swapped in place
         # rather than the agent rebuilt.
-        record = KEYS.get(sid)
+        record = visitor_record(sid)
         stamp = ("visitor", record["key"]) if record else ("house", "")
 
         with self._lock:
@@ -319,14 +327,14 @@ class ChatSessions:
             if held is not None:
                 held["seen"] = time.time()
                 if held["stamp"] != stamp:
-                    provider, kind, _ = provider_for(sid, record)
+                    provider, kind, _ = provider_for(record)
                     held["agent"].provider = provider
                     held["stamp"], held["kind"] = stamp, kind
                 return held["agent"]
 
         # Built outside the lock: constructing an agent reads the task list and
         # there is no reason to hold every other visitor up for it.
-        provider, kind, _ = provider_for(sid, record)
+        provider, kind, _ = provider_for(record)
         agent = ChatAgent(
             provider,
             ServerRuns(REGISTRY, runs_dir=RUNS, target=TARGET, session_id=sid),
@@ -462,7 +470,7 @@ def start_run(task_key: str, repo_url: str | None = None,
         except repo.RepoError as exc:
             return None, str(exc)
         source = {"repo_url": url, "repo_ref": ref}
-    visitor = KEYS.get(sid) if (sid and BYO_ENABLED) else None
+    visitor = visitor_record(sid)
     if REGISTRY.active() >= MAX_CONCURRENT_RUNS:
         return None, (f"{MAX_CONCURRENT_RUNS} runs are already in flight. "
                       f"The arena runs a bounded number at once, deliberately. "
@@ -540,7 +548,7 @@ def start_run(task_key: str, repo_url: str | None = None,
                           "tests_enabled": tests_enabled}
             else:
                 workspace, header, tests_enabled = TARGET, {}, True
-            provider, kind, models = provider_for(sid, visitor)
+            provider, kind, models = provider_for(visitor)
             redact.add(getattr(provider, "_key", ""))
             # The record says who paid and which models sat in each seat.
             # The key itself is in neither the header nor anywhere else the
