@@ -5,11 +5,11 @@ AI finds bugs. Most of them are wrong. This proves which ones aren't.
 Agents review a codebase, and every finding they raise is handed to three
 independent verifiers whose only job is to destroy it. Only survivors are
 reported. The number this makes largest is not how many defects were found, it
-is **how few survived**. A run that raises forty-one findings and reports nine
-is working correctly.
+is **how few survived**. A recorded run against the demo target raised sixteen
+findings and reported nine; the seven it threw away are the point.
 
 ```
-09 / 41  SURVIVED
+09 / 16  SURVIVED
 ```
 
 Every agent action is checked against a written policy before it runs, and every
@@ -25,23 +25,33 @@ own source, it reported that the command allowlist checked only the first word
 of a command, so `python -c "..."` handed the process arbitrary code and left
 the sandbox entirely. No shell metacharacter was involved, so the guard standing
 in front of that path never fired. Reproduced, fixed, and the regression test is
-in `tests/test_core.py`. Eight further defects it found in itself are written up
-unfixed in [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md).
+in [`tests/test_core.py`](tests/test_core.py) (the checks headed "an
+allowlisted binary is not an allowlisted behaviour"). Nine further defects it
+found in itself are written up unfixed in
+[`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md).
 
 **Constrained decoding lifted a 9B local model's defect discovery by 78%.**
 Measured properly: nine planted defects with an answer key, five runs per arm,
-pass marks written down before any number existed. Recovery went from 1.8 to 3.2
-defects per run and from 3 to 7 across the union of runs, while malformed
-replies fell from 12.9% to 0.8%. The reasoning degradation that everyone warns
-about did not appear. Method and raw data in [`bench/`](bench/README.md).
+pass marks written down before any number existed. At the hunt stage, recovery
+went from 1.8 to 3.2 defects per run and from 3 to 7 across the union of runs,
+while malformed replies fell from 12.9% to 0.8%, and the reasoning degradation
+that everyone warns about did not appear there. One pre-registered bar was
+missed: the gate scores defects that survive verification, that number was
+zero in every run of both arms, and `python -m bench.run_bench --compare`
+prints the FAIL. Method, raw data and the full outcome in
+[`bench/README.md`](bench/README.md), with the runs in
+[`bench/results/`](bench/results/).
 
-**Ten runs of that model returned zero survivors, including correct findings.**
-The hunters correctly identified real defects and the verifiers destroyed every
-one, because "default to refuted, uncertainty is a refutation" becomes "refute
-everything" for a model uncertain about everything. A confident zero that looks
-exactly like a clean bill of health and means the opposite. This is why the
-verifier seat is configured separately from the rest, and why it is worth
-knowing before putting a small model in it.
+**Ten runs of that model, thinking off, returned zero survivors, including
+correct findings.** The hunters correctly identified real defects and the
+verifiers destroyed every one, because "default to refuted, uncertainty is a
+refutation" becomes "refute everything" for a model uncertain about everything.
+A confident zero that looks exactly like a clean bill of health and means the
+opposite. This is why the verifier seat is configured separately from the
+rest, and why it is worth knowing before putting a small model in it. (With
+thinking on, three findings survived across ten runs, and most replies were
+starved of output tokens; that pair is kept under `bench/results/starved/`
+and described in the bench README.)
 
 **And the tool reviewing this README was reviewed the same way.** Four agents
 over the new command line code, independent verification on each finding, six
@@ -131,11 +141,11 @@ entry before it, so the file proves its own order and completeness. Editing a
 payload, deleting an entry, inserting one, or swapping two all produce a break,
 and `verify()` names the first sequence number where the chain stops adding up.
 
-You do not have to take the server's word for this. Open the ledger drawer and
-press **Verify chain**: the browser recomputes the whole chain client-side with
-SubtleCrypto and prints the result and the elapsed milliseconds. The claim is
-checkable by the person who doubts it, on their machine, without trusting
-anything this server says.
+You do not have to take the server's word for this. The interface offers the
+ledger for download, and `crucible verify <ledger> --workspace <dir>`
+recomputes the whole chain and replays every policy decision on your machine,
+without trusting anything the server says. The claim is checkable by the
+person who doubts it.
 
 It is tamper-**evident**, not tamper-proof. Making it the latter needs a
 signature and a key kept somewhere else, which is a real design and not one
@@ -192,7 +202,8 @@ matters, and there are three of them per finding.
 | Hunter | `gpt-5-mini` | Many calls in parallel; volume work |
 | Verifier | `gpt-5` | Three per finding; the seat where being wrong is expensive |
 
-A measured run costs roughly twenty cents.
+A run on those seats has cost between 21 and 39 US cents across thirteen
+recorded runs, median 29.
 
 ---
 
@@ -224,9 +235,30 @@ errors its sibling makes.
 
 ## Running it
 
+Python 3.11 or newer and nothing else. From a fresh clone:
+
 ```bash
-pip install .
+git clone https://github.com/BlakeR-M/crucible
+cd crucible
+python -m pip install pytest         # only for the one-command test run
+python -m pytest -q                  # 45 passed: every check file plus the demo target's suite
+python -m crucible.cli --help        # the tool, straight from the checkout
+pip install .                        # or install it: gives you `crucible` and `crucible-server`
 ```
+
+The one path that needs no API key is the web interface in offline mode. It
+runs the real orchestrator, policy and ledger against the demo target with a
+stand-in model that answers from the prompt, so nothing is spent:
+
+```bash
+CRUCIBLE_OFFLINE=1 CRUCIBLE_USER=demo CRUCIBLE_PASS=demo python main.py
+# then open http://localhost:8420 and sign in as demo / demo
+```
+
+Every other path (`crucible run`, `crucible models`, the interface with real
+models, the bench) talks to a model, so it needs `OPENAI_API_KEY` in the
+environment or a local OpenAI-compatible server in `crucible.toml`.
+`crucible verify` needs neither.
 
 ### As a check before something ships
 
@@ -306,17 +338,22 @@ thing, orchestrator and policy and ledger included, without spending anything.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `OPENAI_API_KEY` | — | Required |
+| `CRUCIBLE_USER` / `CRUCIBLE_PASS` | none | Demo credentials. Both required: the server exits with code 2 when either is unset |
+| `OPENAI_API_KEY` | none | Required for paid runs; read when a run starts |
+| `CRUCIBLE_ENV_FILE` | `.env` at the repo root | File the key is read from when it is absent from the environment |
+| `CRUCIBLE_OFFLINE` | unset | `1` runs everything with a local stand-in model and spends nothing |
 | `PORT` | `8420` | Listen port |
-| `CRUCIBLE_USER` / `CRUCIBLE_PASS` | `evaluator` / `crucible` | Demo credentials |
 | `CRUCIBLE_SECRET` | random per boot | Session cookie signing key |
 | `CRUCIBLE_RUN_CEILING_USD` | `0.60` | Spend ceiling for one run |
 | `CRUCIBLE_DAILY_CEILING_USD` | `8.00` | Spend ceiling per UTC day |
+| `CRUCIBLE_CHAT_CEILING_USD` | `0.40` | Spend ceiling for one visitor's conversation |
 
-Deployment to Railway behind a Cloudflare subdomain is covered in
-`docs/DEPLOY.md`, including the two limits that shape the streaming design:
-Railway closes any request at 15 minutes and any silent one at 5, and
-Cloudflare's proxy has been observed buffering `text/event-stream`.
+Deployment to Railway behind a Cloudflare subdomain is the runbook in
+[`docs/deploy.md`](docs/deploy.md); the research behind it, including the two
+limits that shape the streaming design, is in
+[`docs/deploy-research.md`](docs/deploy-research.md): Railway closes any
+request at 15 minutes and any silent one at 5, and Cloudflare's proxy has been
+observed buffering `text/event-stream`.
 
 ### Dependencies
 
@@ -332,14 +369,19 @@ a weaker argument. Every line that serves this can be read.
 ## Tests
 
 ```bash
+python -m pytest -q                # everything below, plus the demo target's own suite
+
 python tests/test_core.py          # 71
 python tests/test_orchestrator.py  # 120
 python tests/test_chat.py          # 134
 python tests/test_archive.py       # 102
-python tests/test_cli.py           # 97
+python tests/test_cli.py           # 125
+python tests/test_assay.py         # 20
 ```
 
-**524 checks, no network, no spend.** The orchestrator suite replaces the model
+**572 checks, no network, no spend.** The check files are plain scripts;
+`tests/test_suite.py` runs each one under pytest so a pipeline needs one
+command. The orchestrator suite replaces the model
 with a stand-in that answers from the prompt it is given, because a queue of
 canned replies handed out to concurrent agents would pass or fail by luck.
 
@@ -404,15 +446,21 @@ The claim that any of this works is checkable rather than asserted, because the
 target carries nine defects with a known answer key.
 
 ```bash
-python -m bench.run_bench --arm A --runs 5   # prompted only
+python -m bench.run_bench --arm A --runs 5   # prompted only (needs a local llama.cpp server)
 python -m bench.run_bench --arm B --runs 5   # constrained decoding
-python -m bench.run_bench --compare
+python -m bench.run_bench --compare          # reads the saved results; no model needed
+python -m bench.analyse
 ```
 
 Every raw reply is saved, so any measure added later is applied to both arms by
 the same code on the same day, and the saved runs stay checkable by anyone who
-wants to disagree with the arithmetic. Method, pass marks and the reasons for
-each in [`bench/README.md`](bench/README.md).
+wants to disagree with the arithmetic. Method, pass marks, the outcome against
+each and the reasons for each in [`bench/README.md`](bench/README.md).
+
+`assay/` holds a second, separate experiment that was killed on its own
+evidence: two pre-registered kill tests for a small-specialist-model idea, both
+negative, with the raw results kept. [`assay/README.md`](assay/README.md) says
+what was measured.
 
 ---
 
