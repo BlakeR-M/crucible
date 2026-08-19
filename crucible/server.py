@@ -338,7 +338,7 @@ def plan_repo(repo_url: str, ref: str | None) -> tuple[str, str | None]:
         raise repo.RepoUrlError("the URL names one ref and the field another; "
                                 "pick one")
     ref = ref or inline_ref
-    repo.check_host(url, REPO_HOSTS)
+    repo.check_host(url, REPO_HOSTS, exact=True)
     return url, ref
 
 
@@ -400,6 +400,8 @@ def start_run(task_key: str, repo_url: str | None = None,
                 timeout_s=REPO_CLONE_TIMEOUT_S, max_bytes=REPO_MAX_BYTES,
                 max_files=REPO_MAX_FILES, allowed_hosts=REPO_HOSTS,
             )
+            # Admission already checked the host exactly; clone() rechecks
+            # with the suffix rule as a floor, never as the only gate.
         except repo.RepoError as exc:
             REGISTRY.publish(run_id, {"kind": "clone_failed",
                                       "reason": str(exc)[:300]})
@@ -441,8 +443,14 @@ def start_run(task_key: str, repo_url: str | None = None,
             if scratch is not None:
                 # The clone lives exactly as long as the run. Removed here on
                 # every path out, so a failed review leaves no stranger's tree
-                # on the box.
-                repo.remove_tree(scratch)
+                # on the box. A removal that fails is logged and must not
+                # skip the spend accounting below, or the daily ceiling would
+                # under-count exactly the runs that went wrong.
+                try:
+                    repo.remove_tree(scratch)
+                except OSError as exc:
+                    print(f"[run {run_id}] could not remove {scratch}: "
+                          f"{type(exc).__name__}: {exc}", file=sys.stderr)
             REGISTRY.add_spend(budget.spent_usd)
             REGISTRY.reap()
 

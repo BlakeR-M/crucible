@@ -19,8 +19,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,12 +109,18 @@ def is_git_url(value: str) -> bool:
         return False
     if _SCP.match(text):
         return True
-    scheme = urlsplit(text).scheme.lower()
+    try:
+        scheme = urlsplit(text).scheme.lower()
+    except ValueError:
+        return False
     return scheme in ("https", "http", "ssh", "git")
 
 
 def host_of(url: str) -> str:
-    return (urlsplit(url).hostname or "").lower()
+    try:
+        return (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
 
 
 def parse_repo_ref(value: str) -> tuple[str, str | None]:
@@ -141,7 +149,15 @@ def parse_repo_ref(value: str) -> tuple[str, str | None]:
         url = f"https://{scp.group('host')}/{path.lstrip('/')}"
         return _canonical(url), _check_ref(ref)
 
-    parts = urlsplit(text)
+    try:
+        parts = urlsplit(text)
+        # .port and .hostname raise on a port out of range, a port that is
+        # not a number, and an unclosed IPv6 bracket. Read once here so the
+        # caller sees a repository error rather than a ValueError.
+        _ = parts.port, parts.hostname
+    except ValueError as exc:
+        raise RepoUrlError(f"'{text[:80]}' is not a URL this tool can read: "
+                           f"{exc}") from None
     scheme = parts.scheme.lower()
     if scheme not in ("https", "http", "ssh", "git"):
         raise RepoUrlError(
@@ -200,14 +216,32 @@ def _canonical(url: str) -> str:
     return url
 
 
-def check_host(url: str, allowed_hosts) -> None:
+def check_host(url: str, allowed_hosts, *, exact: bool = False) -> None:
     """Raise unless the URL's host is in the allowlist. `None` means no
-    allowlist, which is the CLI's position and never the server's."""
+    allowlist, which is the CLI's position and never the server's.
+
+    `exact` is the server's position: the bare host only, no subdomain and no
+    explicit port, because `github.com` on the list means github.com and a
+    lookalike with a port or a prefix is exactly what an allowlist exists to
+    refuse.
+    """
     if allowed_hosts is None:
         return
     host = host_of(url)
     permitted = [h.lower().strip() for h in allowed_hosts if h.strip()]
-    if any(host == h or host.endswith("." + h) for h in permitted):
+    if exact:
+        try:
+            port = urlsplit(url).port
+        except ValueError:
+            port = -1
+        if port is not None:
+            raise RepoHostNotAllowed(
+                f"this reviewer takes repositories from {', '.join(permitted)} "
+                f"on the standard port; '{host}' with a port of its own is "
+                f"outside that.")
+        if host in permitted:
+            return
+    elif any(host == h or host.endswith("." + h) for h in permitted):
         return
     raise RepoHostNotAllowed(
         f"this reviewer takes repositories from {', '.join(permitted)}. "
@@ -226,22 +260,64 @@ def _git_env() -> dict:
     # No LFS smudge on clone: a repository whose large files live elsewhere
     # would otherwise reach out for them and defeat the size cap.
     env["GIT_LFS_SKIP_SMUDGE"] = "1"
+    # Git Credential Manager would otherwise open a sign-in window on a
+    # private repository, and a helper with a stored token would clone one.
+    env["GCM_INTERACTIVE"] = "never"
     return env
 
 
-def _git(args: list[str], *, cwd: Path | None, timeout_s: float) -> subprocess.CompletedProcess:
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """End git and everything it started.
+
+    git clone is a small family: git.exe, git-remote-https, index-pack. Killing
+    the parent alone leaves the children holding the pack file and the pipes,
+    which is a timeout that never actually stops and a workspace that cannot
+    be removed. On Windows taskkill /T takes the tree; elsewhere the child was
+    started as its own session and the whole group gets the signal.
+    """
+    if proc.poll() is not None:
+        return
     try:
-        return subprocess.run(
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=30)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=30)
+    except subprocess.SubprocessError:
+        pass
+
+
+def _git(args: list[str], *, cwd: Path | None, timeout_s: float) -> subprocess.CompletedProcess:
+    kwargs: dict = {}
+    if sys.platform != "win32":
+        kwargs["start_new_session"] = True
+    try:
+        proc = subprocess.Popen(
             ["git", *args], cwd=str(cwd) if cwd else None, env=_git_env(),
-            capture_output=True, text=True, timeout=timeout_s,
-            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdin=subprocess.DEVNULL, **kwargs,
         )
     except FileNotFoundError as exc:
         raise RepoCloneFailed("git is not on the PATH, and reviewing a URL "
                               "needs it") from exc
+    try:
+        out, err = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired as exc:
+        _kill_tree(proc)
         raise RepoCloneFailed(f"git took longer than {timeout_s:.0f}s, so the "
                               f"clone was stopped") from exc
+    except BaseException:
+        _kill_tree(proc)
+        raise
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
 
 
 def _fail_text(proc: subprocess.CompletedProcess) -> str:
@@ -327,7 +403,11 @@ def clone(url: str, ref: str | None, dest: Path, *, depth: int = 1,
                 "--no-tags",
                 # Symlinks stay as text files. A link out of the tree is a
                 # read past the boundary the policy would otherwise refuse.
-                "-c", "core.symlinks=false"]
+                "-c", "core.symlinks=false",
+                # No credential helper for this command: a token the host's
+                # git has stored for the operator must not clone a private
+                # repository on a stranger's behalf. Public means public.
+                "-c", "credential.helper="]
         want_sha = bool(ref and _SHA.match(ref))
         if ref and not want_sha:
             args += ["--branch", ref]

@@ -100,6 +100,11 @@ def parse_checks() -> None:
     check("a ref with .. is refused",
           "not a branch" in refuses(lambda: p("https://github.com/o/r@a..b")))
     check("a file: URL is refused", "does not look like" in refuses(lambda: p("file:///tmp/x")))
+    for bad in ("https://github.com:99999/o/r", "https://[::1/o/r", "https://github.com:abc/o/r"):
+        check(f"a malformed URL is a RepoUrlError, not a ValueError: {bad}",
+              "not a URL this tool can read" in refuses(lambda: p(bad), repo.RepoUrlError))
+    check("is_git_url survives a malformed URL", repo.is_git_url("https://[::1/o/r") is False)
+    check("host_of survives a malformed URL", repo.host_of("https://[::1/o/r") == "")
 
     section("host allowlist")
     ok = refuses(lambda: repo.check_host("https://github.com/o/r", repo.DEFAULT_HOSTS))
@@ -114,6 +119,15 @@ def parse_checks() -> None:
     check("a lookalike suffix does not",
           refuses(lambda: repo.check_host("https://notgithub.com/o/r", ["github.com"])) != "")
     check("None means no allowlist", refuses(lambda: repo.check_host("https://any/o/r", None)) == "")
+
+    section("host allowlist, exact (the server's position)")
+    check("the bare host passes", refuses(lambda: repo.check_host("https://github.com/o/r", repo.DEFAULT_HOSTS, exact=True)) == "")
+    check("a subdomain is refused",
+          "outside that list" in refuses(lambda: repo.check_host("https://api.github.com/o/r", repo.DEFAULT_HOSTS, exact=True)))
+    check("an explicit port is refused, even the default one",
+          "port" in refuses(lambda: repo.check_host("https://github.com:443/o/r", repo.DEFAULT_HOSTS, exact=True)))
+    check("a non-standard port is refused",
+          "port" in refuses(lambda: repo.check_host("https://github.com:8443/o/r", repo.DEFAULT_HOSTS, exact=True)))
 
 
 # ------------------------------------------------------------------- clone
@@ -136,6 +150,14 @@ def make_bare(tmp: Path) -> tuple[Path, str]:
     sha = subprocess.run(["git", "-C", str(src), "rev-parse", "HEAD"],
                          capture_output=True, text=True, check=True).stdout.strip()
     return bare, sha
+
+
+HANG_SCRIPT = (
+    'import subprocess, sys, time, os\n'
+    "kid = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+    "open(os.environ['HANG_PIDS'], 'a').write(str(os.getpid()) + ' ' + str(kid.pid) + chr(10))\n"
+    'time.sleep(60)\n'
+)
 
 
 def clone_checks(tmp: Path) -> None:
@@ -201,6 +223,77 @@ def clone_checks(tmp: Path) -> None:
                   repo.RepoHostNotAllowed)
     check("scp form is canonicalised before the host check", "evil.example" in msg)
     check("nothing was created", not (tmp / "ws-host").exists())
+
+    section("clone: git is told to use no credential helper and never to prompt")
+    seen: list = []
+    real_git = repo._git
+
+    def spy_git(args, *, cwd, timeout_s):
+        seen.append(list(args))
+        return real_git(args, cwd=cwd, timeout_s=timeout_s)
+
+    repo._git = spy_git
+    try:
+        repo.clone(str(bare), None, tmp / "ws-spy", allow_local=True)
+    finally:
+        repo._git = real_git
+    clone_args = next(a for a in seen if a and a[0] == "clone")
+    check("clone passes -c credential.helper=",
+          any(clone_args[i] == "-c" and clone_args[i + 1] == "credential.helper="
+              for i in range(len(clone_args) - 1)), str(clone_args))
+    check("and the url comes after --", "--" in clone_args and clone_args.index("--") < clone_args.index(str(bare)))
+    env = repo._git_env()
+    check("GIT_TERMINAL_PROMPT=0", env.get("GIT_TERMINAL_PROMPT") == "0")
+    check("GIT_ASKPASS=echo", env.get("GIT_ASKPASS") == "echo")
+    check("GCM_INTERACTIVE=never", env.get("GCM_INTERACTIVE") == "never")
+
+    section("clone: a timeout ends the whole git process tree")
+    # A hung child rather than a slow network: git is stood in for by a
+    # script that starts a grandchild and sleeps, and the timeout has to end
+    # both and leave a directory that can be removed.
+    hang = tmp / "hang"
+    hang.mkdir()
+    (hang / "git.py").write_text(HANG_SCRIPT, encoding="utf-8")
+    pids_file = hang / "pids"
+    real_popen = subprocess.Popen
+
+    def fake_popen(cmd, *a, **kw):
+        # 'git ...' becomes 'python git.py ...' with the same env plus where to
+        # write the pids, so the tree kill can be checked afterwards. Anything
+        # else (taskkill, say) runs as itself.
+        if not cmd or cmd[0] != "git":
+            return real_popen(cmd, *a, **kw)
+        kw["env"] = {**kw.get("env", {}), "HANG_PIDS": str(pids_file),
+                     "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
+                     "PATH": os.environ.get("PATH", "")}
+        return real_popen([sys.executable, str(hang / "git.py"), *cmd[1:]], *a, **kw)
+
+    repo.subprocess.Popen = fake_popen
+    started = time.time()
+    try:
+        msg = refuses(lambda: repo.clone(str(bare), None, tmp / "ws-hang", allow_local=True, timeout_s=2),
+                      repo.RepoCloneFailed)
+    finally:
+        repo.subprocess.Popen = real_popen
+    check("the timeout is a RepoCloneFailed", "longer than 2s" in msg, msg)
+    check("and it returned near the deadline, not after 60s", time.time() - started < 30)
+    check("the workspace was removed", not (tmp / "ws-hang").exists())
+    pids = [int(x) for x in pids_file.read_text().split()] if pids_file.exists() else []
+    check("the fake git recorded itself and its child", len(pids) == 2, str(pids))
+
+    def alive(pid: int) -> bool:
+        if sys.platform == "win32":
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                                 capture_output=True, text=True).stdout
+            return str(pid) in out
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    time.sleep(1.0)
+    check("neither process is still alive", not any(alive(p) for p in pids), str(pids))
 
     section("remove_tree handles read-only files")
     ro = tmp / "ro"
@@ -290,6 +383,14 @@ def server_checks(tmp: Path) -> None:
     check("an absurdly long address is a 400", status == 400)
     status, body = server.admit_run({"repo_url": "https://github.com/o/r@main", "ref": "dev"})
     check("two different refs are a 400", status == 400 and "pick one" in body["error"])
+    for bad in ("https://github.com:99999/o/r", "https://[::1/o/r", "https://github.com:abc/o/r"):
+        status, body = server.admit_run({"repo_url": bad})
+        check(f"a malformed URL is a 400 with a sentence: {bad}",
+              status == 400 and "not a URL this tool can read" in body["error"], str(body))
+    status, body = server.admit_run({"repo_url": "https://github.com:8443/o/r"})
+    check("an explicit port is a 400 on the server", status == 400 and "port" in body["error"])
+    status, body = server.admit_run({"repo_url": "https://api.github.com/o/r"})
+    check("a subdomain of an allowed host is a 400 on the server", status == 400)
     check("still no run created", server.REGISTRY.listing() == before)
 
     section("server: a run against a repository, offline, local origin standing in")
@@ -369,6 +470,29 @@ def server_checks(tmp: Path) -> None:
         stray = [p for p in Path(tempfile.gettempdir()).glob("crucible-repo-*")]
         check("no crucible-repo-* workspace is left in the temp directory",
               not stray, str(stray[:3]))
+
+        section("server: a workspace that cannot be removed still counts its spend")
+        real_remove = server.repo.remove_tree
+
+        def stubborn(path):
+            raise PermissionError(f"pretend {path} is held open")
+
+        server.repo.remove_tree = stubborn
+        spent_before = server.REGISTRY.day_spend()
+        try:
+            status, body = server.admit_run({"repo_url": "https://github.com/octocat/absent"})
+            state = server.REGISTRY.get(body["run_id"])
+            deadline = time.time() + 60
+            while not state["finished"] and time.time() < deadline:
+                time.sleep(0.2)
+            check("the run still finished", state["finished"])
+            check("the slot was released", server.REGISTRY.active() == 0)
+            check("day_spend was reached (accounting ran after the failed removal)",
+                  server.REGISTRY.day_spend() >= spent_before)
+        finally:
+            server.repo.remove_tree = real_remove
+            for p in Path(tempfile.gettempdir()).glob("crucible-repo-*"):
+                real_remove(p)
     finally:
         server.clone = real_clone
 
@@ -385,6 +509,18 @@ def cli_checks(tmp: Path) -> None:
                        capture_output=True, text=True, cwd=str(ROOT))
     check("a missing directory still exits 2 with the old message",
           r.returncode == 2 and "no such directory" in r.stderr)
+
+    section("cli: a failed clone leaves no crucible-repo-* directory behind")
+    # The host resolves to nothing, so git fails on the spot; the CLI's own
+    # temp directory (the parent of the checkout) must go with it.
+    before = set(Path(tempfile.gettempdir()).glob("crucible-repo-*"))
+    r = subprocess.run([sys.executable, "-m", "crucible.cli", "run",
+                        "https://nonexistent.invalid/o/r", "--ledger-dir", str(tmp / "cli2"),
+                        "--clone-timeout", "60"],
+                       capture_output=True, text=True, cwd=str(ROOT), timeout=120)
+    check("exit 2 with the repository reason", r.returncode == 2 and "repository:" in r.stderr, r.stderr[-200:])
+    after = set(Path(tempfile.gettempdir()).glob("crucible-repo-*"))
+    check("no new crucible-repo-* directory remains", after <= before, str(after - before))
 
 
 def main() -> None:

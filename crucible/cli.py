@@ -265,9 +265,15 @@ def _fetch_repo(target: str, args) -> repo.CloneResult:
         print(f"  cloning   {url}" + (f" @ {args.ref or inline_ref}"
                                       if (args.ref or inline_ref) else ""))
     started = time.time()
-    result = repo.clone(url, args.ref or inline_ref, dest / "checkout",
-                        timeout_s=args.clone_timeout,
-                        max_bytes=REPO_MAX_BYTES_CLI, max_files=REPO_MAX_FILES_CLI)
+    try:
+        result = repo.clone(url, args.ref or inline_ref, dest / "checkout",
+                            timeout_s=args.clone_timeout,
+                            max_bytes=REPO_MAX_BYTES_CLI, max_files=REPO_MAX_FILES_CLI)
+    except BaseException:
+        # clone() removes its own checkout; the directory made for it here
+        # is this function's to remove, on every way out.
+        repo.remove_tree(dest)
+        raise
     if not args.quiet:
         print(f"  cloned    {result.files} files, {result.bytes / 1_000_000:.2f} MB, "
               f"{time.time() - started:.1f}s")

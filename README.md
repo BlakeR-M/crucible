@@ -426,10 +426,10 @@ python tests/test_chat.py          # 134
 python tests/test_archive.py       # 102
 python tests/test_cli.py           # 125
 python tests/test_assay.py         # 20
-python tests/test_repo.py          # 97
+python tests/test_repo.py          # 126
 ```
 
-**669 checks, no network, no spend.** The check files are plain scripts;
+**698 checks, no network, no spend.** The check files are plain scripts;
 `tests/test_suite.py` runs each one under pytest so a pipeline needs one
 command. The orchestrator suite replaces the model
 with a stand-in that answers from the prompt it is given, because a queue of
