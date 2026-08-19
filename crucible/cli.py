@@ -458,7 +458,7 @@ def cmd_verify(args) -> int:
         # Older ledgers carry no source at all, and that is a local run rather
         # than a fault, so this line appears only when there is one to show.
         ref = f" ({header['repo_ref']})" if header.get("repo_ref") else ""
-        print(f"  source    {header['repo_url']}{ref} @ "
+        print(f"  reviewed  {header['repo_url']}{ref} @ "
               f"{header.get('commit_sha') or 'commit not recorded'}")
     print(f"  policy    '{policy.name}' with "
           f"{len(policy.rules)} permitted tool(s)")
