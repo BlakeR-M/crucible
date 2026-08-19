@@ -1,5 +1,10 @@
 <!-- Research document. Compiled 2026-08-16 against live provider docs. -->
 
+> **Runbook:** the steps actually used for the hosted demo are in [`deploy.md`](deploy.md).
+> This file is the research behind them. Its sample `main.py`, `railway.json` and
+> `static/index.html` are illustrations written before the code and differ from the
+> real files (the real server is `crucible/server.py`; the real watch pattern is `web/**`).
+
 > **What this is.** The deployment path for this application: Railway from a
 > GitHub repository, behind a Cloudflare subdomain, serving a Server-Sent
 > Events stream.
