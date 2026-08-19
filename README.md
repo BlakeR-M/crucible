@@ -387,7 +387,7 @@ thing, orchestrator and policy and ledger included, without spending anything.
 | `CRUCIBLE_REPO_MAX_FILES` | `5000` | File cap on a cloned repository |
 | `CRUCIBLE_REPO_CLONE_TIMEOUT_S` | `120` | Seconds a clone may take before it is stopped |
 | `CRUCIBLE_URL_RUN_TESTS` | unset | `1` lets a URL run execute the repository's own tests; off, the run uses the `review-read-only` policy |
-| `CRUCIBLE_BYO_ENABLED` | `1` | Lets a signed-in visitor attach their own OpenAI or Gemini key for the session; `0` removes the block and the routes |
+| `CRUCIBLE_BYO_ENABLED` | `1` | Lets a signed-in visitor attach their own OpenAI or Gemini key for the session; `0` hides the block and refuses attaching |
 | `CRUCIBLE_BYO_RUN_CEILING_USD` | `1.00` | Spend ceiling for one run on a visitor's key; a visitor may raise it per run up to the hard maximum of `5.00` |
 
 A visitor can bring their own key. After signing in, `POST /api/key` with
