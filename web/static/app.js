@@ -159,6 +159,7 @@ async function readChat(res, mine, thinking, did) {
         mine.append(el('p', 'notice', e.text || 'Something went wrong.'));
       } else if (e.kind === 'chat_done') {
         meter(e.spent_usd, e.ceiling_usd);
+        if (e.provider_kind === 'visitor') byoRefresh();
       }
     }
   }
@@ -204,7 +205,7 @@ function attach(runId) {
 }
 
 function reset(runId) {
-  S.runId = runId; S.started = Date.now(); S.seen = -1;
+  S.runId = runId; S.started = Date.now(); S.seen = -1; S.provider = null;
   S.agents.clear(); S.claims.clear();
   S.found = S.keep = S.out = S.refused = S.calls = S.reads = 0; S.spend = 0;
   $('idle').style.display = 'none';
@@ -219,6 +220,7 @@ function handle(e) {
     case 'clone_started':   return onCloneStarted(e);
     case 'clone_finished':  return onCloneFinished(e);
     case 'clone_failed':    return onCloneFailed(e);
+    case 'provider':        return onProvider(e);
     case 'run_started':     return onStart(e);
     case 'phase':           return onPhase(e);
     case 'agent_started':   return onAgent(e);
@@ -252,9 +254,23 @@ function node(parentKids, { name, role, live }) {
   return { n, who, meta, acts, kids };
 }
 
+function onProvider(e) {
+  // Arrives before there is a planner to hang it on; onStart writes it.
+  S.provider = e;
+  $('tick-state').textContent = { visitor: 'running on your key', operator: 'running on the house key',
+                                  offline: 'running the stand-in model' }[e.provider_kind] || 'starting';
+}
+
 function onStart(e) {
   const root = node($('thread'), { name: 'Planner', role: 'splitting the work', live: true });
   root.acts.append(mkAct('task', e.task || ''));
+  const kind = e.provider_kind || (S.provider && S.provider.provider_kind);
+  if (kind) {
+    const words = { visitor: 'your key', operator: 'the house key', offline: 'the stand-in model' };
+    const m = e.models || (S.provider && S.provider.models) || {};
+    root.acts.append(mkAct('model', (words[kind] || kind) +
+      (m.planner ? `  ${m.planner} plans, ${m.worker} hunts, ${m.verifier} verifies` : '')));
+  }
   if (e.repo_url) {
     root.acts.append(mkAct('source', e.repo_url + (e.commit_sha ? ' @ ' + String(e.commit_sha).slice(0, 12) : '')));
   }
@@ -473,6 +489,7 @@ function onFinished(e) {
   box.append(link);
 
   $('closing').append(box);
+  if (BYO.attached) byoRefresh();
 }
 
 /* ------------------------------------------------------------ repo form */
@@ -491,18 +508,100 @@ async function repoLimits() {
     const hosts = (d.repo_hosts || []).join(' or ');
     hint(`Public repositories on ${hosts}, up to ${d.repo_max_mb} MB and ` +
          `${d.repo_max_files} files, one commit deep. Add @branch, @tag or @commit to pick a ref.`);
+    S.offline = !!d.offline;
     if (d.offline) {
       const note = document.createElement('p');
       note.className = 'notice';
       note.id = 'offline-notice';
-      note.textContent = 'This deployment runs the full arena with a stand-in model: the planner, hunters, ' +
-        'verifiers, policy and ledger are real and every completion is scripted, so no findings here ' +
-        'come from a live model. Live model runs switch on when the operator supplies a provider key.';
       const idle = $('idle');
       if (idle && !$('offline-notice')) idle.insertBefore(note, idle.firstChild);
     }
+    byoRender(d.byo || {});
   } catch { /* the field still works without the numbers */ }
 }
+
+/* -------------------------------------------------------------- your key */
+
+const BYO = { enabled: false, ceiling: 1, max: 5, attached: false };
+
+function offlineNotice() {
+  const note = $('offline-notice');
+  if (!note) return;
+  note.textContent = 'This deployment runs the full arena with a stand-in model: the planner, hunters, ' +
+    'verifiers, policy and ledger are real and every completion is scripted, so no findings here ' +
+    'come from a live model. Live model runs switch on when the operator supplies a provider key' +
+    (BYO.enabled && !BYO.attached ? ', or attach your own key below to run against a live model.' : '.');
+}
+
+function byoHint(text, said) {
+  const h = $('byo-hint');
+  h.textContent = text || '';
+  h.classList.toggle('said', !!said);
+}
+
+function byoRender(d) {
+  BYO.enabled = !!d.enabled;
+  BYO.ceiling = d.run_ceiling_usd || BYO.ceiling;
+  BYO.max = d.run_ceiling_max_usd || BYO.max;
+  BYO.attached = !!d.attached;
+  $('byo').hidden = !BYO.enabled;
+  $('byo-form').hidden = BYO.attached;
+  $('byo-held').hidden = !BYO.attached;
+  if (BYO.attached) {
+    $('byo-status').textContent =
+      `Attached: ${d.provider} · this session only · spent $${(d.spent_usd || 0).toFixed(2)} of ` +
+      `$${(d.ceiling_usd || BYO.ceiling).toFixed(2)} ceiling per run`;
+    $('byo-key').value = '';
+  } else {
+    $('byo-ceiling').placeholder = `$${BYO.ceiling.toFixed(2)} per run`;
+    $('byo-ceiling').max = String(BYO.max);
+  }
+  offlineNotice();
+}
+
+async function byoRefresh() {
+  try {
+    const r = await fetch('/api/key');
+    if (r.ok) byoRender(await r.json());
+  } catch { /* the block keeps its last state */ }
+}
+
+$('byo').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const key = $('byo-key').value.trim();
+  if (!key) { byoHint('Paste the key you want this session to run on.', true); return; }
+  $('byo-go').disabled = true;
+  byoHint('Checking the key with the provider.');
+  try {
+    const body = { provider: $('byo-provider').value, api_key: key };
+    const ceiling = parseFloat($('byo-ceiling').value);
+    if (ceiling > 0) body.ceiling_usd = ceiling;
+    const r = await fetch('/api/key', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { byoHint(d.error || 'The key was kept out. Check it and try again.', true); return; }
+    byoHint('Attached. Runs and the conversation now use your key.');
+    byoRender({ ...d, enabled: true });
+  } catch {
+    byoHint('The server is out of reach just now. Try again in a moment.', true);
+  } finally {
+    $('byo-go').disabled = false;
+    $('byo-key').value = '';
+  }
+});
+
+$('byo-forget').addEventListener('click', async () => {
+  try {
+    const r = await fetch('/api/key', { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    byoRender({ ...d, enabled: true });
+    byoHint('Forgotten. Runs go back to this deployment’s own model.');
+  } catch {
+    byoHint('The server is out of reach just now. Try again in a moment.', true);
+  }
+});
 
 $('repo').addEventListener('submit', async (e) => {
   e.preventDefault();

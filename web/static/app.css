@@ -166,24 +166,37 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 .idle p { margin-bottom: 8px; }
 .idle b { color: var(--ink); }
 
-/* The URL form. One field, one button, one line of guidance beneath it. */
-.repo { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule-hair); }
-.repo label { display: block; color: var(--ink); font-size: var(--t-sub); margin-bottom: 6px; }
-.repo .row { display: flex; gap: 9px; }
-.repo input {
+/* The URL form and the key form share one look: fields, a button, one line
+ * of guidance beneath. */
+.repo, .byo { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule-hair); }
+.repo label, .byo label { display: block; color: var(--ink); font-size: var(--t-sub); margin-bottom: 6px; }
+.repo .row, .byo .row { display: flex; gap: 9px; align-items: center; }
+.repo input, .byo input, .byo select {
   flex: 1; min-width: 0; font-family: var(--face-mono, monospace); font-size: var(--t-marg);
   color: var(--ink); background: var(--paper); border: 1px solid var(--rule); padding: 8px 10px;
 }
-.repo input:focus { outline: none; border-color: var(--ink); }
-.repo button {
+.byo select { flex: 0 0 auto; }
+.byo #byo-ceiling { flex: 0 0 8.5em; }
+.repo input:focus, .byo input:focus, .byo select:focus { outline: none; border-color: var(--ink); }
+.repo button, .byo button {
   font-family: var(--face-text); font-size: var(--t-sub); padding: 8px 16px;
   background: var(--paper); color: var(--ink); border: 1px solid var(--ink); cursor: pointer;
   transition: background .12s ease, color .12s ease;
 }
-.repo button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
-.repo button:disabled { border-color: var(--rule); color: var(--ink-faint); cursor: default; }
-.repo .hint { font-size: var(--t-marg); color: var(--ink-faint); margin-top: 7px; min-height: 1.4em; }
-.repo .hint.said { color: var(--rubric); }
+.repo button:hover:not(:disabled), .byo button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+.repo button:disabled, .byo button:disabled { border-color: var(--rule); color: var(--ink-faint); cursor: default; }
+.repo .hint, .byo .hint { font-size: var(--t-marg); color: var(--ink-faint); margin-top: 7px; min-height: 1.4em; }
+.repo .hint.said, .byo .hint.said { color: var(--rubric); }
+.byo > .hint { margin: 0 0 8px; }
+.byo .status { flex: 1; font-size: var(--t-marg); color: var(--ink); }
+.byo [hidden] { display: none; }
+.head .out { margin-left: 14px; }
+.head .out button {
+  font-family: var(--face-text); font-size: var(--t-marg); color: var(--ink-faint);
+  background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.head .out button:hover { color: var(--ink); }
 
 /* ------------------------------------------------------------- the thread */
 

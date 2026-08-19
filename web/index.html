@@ -15,6 +15,7 @@
     <span class="wm">Crucible</span>
     <span class="thesis">AI finds bugs. Most of them are wrong. This proves which ones aren&rsquo;t.</span>
     <span class="id mono" id="runid"></span>
+    <form class="out" method="post" action="/api/logout"><button type="submit">Sign out</button></form>
   </div>
 </header>
 
@@ -56,6 +57,28 @@
             <button type="submit" id="repo-go">Review</button>
           </div>
           <p class="hint" id="repo-hint"></p>
+        </form>
+        <form class="byo" id="byo" autocomplete="off">
+          <label for="byo-key">Bring your own key</label>
+          <p class="hint">Run the arena against a live model on your own account. The key stays in
+             this server&rsquo;s memory for this session only: it is dropped when you sign out or the
+             session expires, and it is written to nothing.</p>
+          <div class="row" id="byo-form">
+            <select id="byo-provider" aria-label="Provider">
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Gemini</option>
+            </select>
+            <input id="byo-key" type="password" autocomplete="off" spellcheck="false"
+                   placeholder="API key">
+            <input id="byo-ceiling" type="number" inputmode="decimal" min="0.01" step="0.05"
+                   placeholder="$ per run" aria-label="Ceiling per run in dollars">
+            <button type="submit" id="byo-go">Attach</button>
+          </div>
+          <div class="row" id="byo-held" hidden>
+            <span class="status" id="byo-status"></span>
+            <button type="button" id="byo-forget">Forget key</button>
+          </div>
+          <p class="hint" id="byo-hint"></p>
         </form>
       </div>
       <div id="thread"></div>
