@@ -49,12 +49,17 @@ class Break:
 class Ledger:
     """Append-only JSONL. One file per run."""
 
-    def __init__(self, path: Path, *, clock=None):
+    def __init__(self, path: Path, *, clock=None, scrub=None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Injected so tests get deterministic timestamps and the chain they
         # assert on is reproducible.
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        # Applied to every payload before it is hashed and written. The
+        # hosted server passes a redactor here so a provider error that quotes
+        # a key is scrubbed before it becomes part of the record, and the
+        # chain is computed over what was actually written.
+        self._scrub = scrub
         self._seq = 0
         self._head = GENESIS
         # Agents run in parallel and all of them write here. Reading the head,
@@ -77,6 +82,8 @@ class Ledger:
 
     def append(self, event: str, **payload) -> dict:
         """Write one event and return it, including its place in the chain."""
+        if self._scrub is not None:
+            payload = self._scrub(payload)
         with self._lock:
             ts = self._clock().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
             entry = {
