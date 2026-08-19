@@ -249,7 +249,7 @@ def cmd_models(args) -> int:
     return EXIT_CLEAN
 
 
-def _fetch_repo(args) -> repo.CloneResult:
+def _fetch_repo(target: str, args) -> repo.CloneResult:
     """A URL on the command line becomes a temporary workspace.
 
     The whole guardrail set the server applies, with two exceptions the person
@@ -257,7 +257,7 @@ def _fetch_repo(args) -> repo.CloneResult:
     developer pointing the tool at their own large repository is spending
     their own time and their own key.
     """
-    url, inline_ref = repo.parse_repo_ref(args.path)
+    url, inline_ref = repo.parse_repo_ref(target)
     if inline_ref and args.ref and inline_ref != args.ref:
         raise ConfigError("the URL names one ref and --ref another; pick one")
     dest = repo.workspace_dir()
@@ -280,9 +280,9 @@ def cmd_run(args) -> int:
         # The config comes from the current directory (or --config) rather
         # than from inside a stranger's repository. A crucible.toml in the
         # clone naming a different endpoint would otherwise steer the run.
-        args.path = "."
+        target, args.path = args.path, "."
         try:
-            fetched = _fetch_repo(args)
+            fetched = _fetch_repo(target, args)
         except repo.RepoError as exc:
             print(f"repository: {exc}", file=sys.stderr)
             return EXIT_FAILED
