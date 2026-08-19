@@ -14,7 +14,8 @@ is grey-clouded, how the stream survives) is in
 | variable | required | notes |
 |---|---|---|
 | `CRUCIBLE_USER`, `CRUCIBLE_PASS` | yes | Demo sign-in. There is no built-in pair: with either unset the process prints why and exits with code 2, so a deployment that forgot them stays down rather than open. |
-| `OPENAI_API_KEY` | yes, for paid runs | Read from the environment when a run or conversation starts. Absent, the server still boots and every run fails with a plain "no OPENAI_API_KEY" event. |
+| `CRUCIBLE_PROVIDER` | no | `openai` (default) or `gemini`. Gemini uses `GEMINI_API_KEY` and Google's OpenAI-compatible endpoint; per-tier models via `CRUCIBLE_MODEL_PLANNER`, `CRUCIBLE_MODEL_WORKER`, `CRUCIBLE_MODEL_VERIFIER`. |
+| `OPENAI_API_KEY` | yes, for paid runs with the openai provider | Read from the environment when a run or conversation starts. Absent, the server still boots and every run fails with a plain "no OPENAI_API_KEY" event. |
 | `PORT` | set by Railway | Defaults to `8420` locally. |
 | `CRUCIBLE_SECRET` | recommended | Signs the session cookie. Unset, a random value is drawn per boot and every deploy signs everyone out. Any long random string. |
 | `CRUCIBLE_RUN_CEILING_USD` | no | Spend ceiling for one run, default `0.60`. |

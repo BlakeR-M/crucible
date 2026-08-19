@@ -42,6 +42,22 @@ RATES: dict[str, tuple[float, float]] = {
     "gpt-5-mini": (0.25, 2.00),
     "gpt-4.1-mini": (0.40, 1.60),
     "o4-mini": (1.10, 4.40),
+    # Gemini through its OpenAI-compatible endpoint. Rates are conservative
+    # estimates so the budget errs towards refusing; an unknown model is
+    # priced at the table maximum, which is stricter still.
+    "gemini-3.1-pro-preview": (2.00, 12.00),
+    "gemini-2.5-pro": (1.25, 10.00),
+    "gemini-3.5-flash": (0.35, 3.00),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-flash-latest": (0.35, 3.00),
+}
+
+# Gemini's OpenAI-compatible endpoint. Selected with CRUCIBLE_PROVIDER=gemini.
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+GEMINI_DEFAULT_MODELS: dict[Tier, str] = {
+    Tier.PLANNER: "gemini-3.1-pro-preview",
+    Tier.WORKER: "gemini-3.5-flash",
+    Tier.VERIFIER: "gemini-3.1-pro-preview",
 }
 
 DEFAULT_MODELS: dict[Tier, str] = {
@@ -384,18 +400,41 @@ def load_env(path: Path) -> dict[str, str]:
     return values
 
 
-def provider_from_env(*, extra_env: Path | None = None):
-    """Prefer the process environment, fall back to a named env file.
+def _env_or_file(name: str, extra_env: Path | None) -> str:
+    value = os.environ.get(name, "")
+    if not value and extra_env is not None:
+        value = load_env(extra_env).get(name, "")
+    return value
 
-    On Railway the key arrives as a real environment variable. On this machine
-    it currently lives in a file, so both paths work and neither is written
-    into the repository.
+
+def models_from_env(defaults: dict[Tier, str]) -> dict[Tier, str]:
+    """Per-tier model names, overridable with CRUCIBLE_MODEL_PLANNER, _WORKER, _VERIFIER."""
+    return {
+        tier: os.environ.get(f"CRUCIBLE_MODEL_{tier.name}", "") or defaults[tier]
+        for tier in Tier
+    }
+
+
+def provider_from_env(*, extra_env: Path | None = None):
+    """The paid provider, chosen by CRUCIBLE_PROVIDER (openai by default, or gemini).
+
+    Keys come from the process environment first and a named env file second.
+    On Railway the key arrives as a real environment variable. On a workstation
+    it may live in a file, so both paths work and neither is written into the
+    repository. Model names per tier can be overridden with CRUCIBLE_MODEL_PLANNER,
+    CRUCIBLE_MODEL_WORKER and CRUCIBLE_MODEL_VERIFIER.
     """
-    key = os.environ.get("OPENAI_API_KEY", "")
-    if not key and extra_env is not None:
-        key = load_env(extra_env).get("OPENAI_API_KEY", "")
+    kind = os.environ.get("CRUCIBLE_PROVIDER", "openai").strip().lower()
+    if kind == "gemini":
+        key = _env_or_file("GEMINI_API_KEY", extra_env)
+        if not key:
+            raise RuntimeError("CRUCIBLE_PROVIDER=gemini needs GEMINI_API_KEY in the environment or the named env file")
+        return OpenAIProvider(key, models_from_env(GEMINI_DEFAULT_MODELS), base_url=GEMINI_BASE_URL)
+    if kind != "openai":
+        raise RuntimeError(f"CRUCIBLE_PROVIDER must be openai or gemini, not {kind!r}")
+    key = _env_or_file("OPENAI_API_KEY", extra_env)
     if not key:
         raise RuntimeError(
             "no OPENAI_API_KEY in the environment or the named env file"
         )
-    return OpenAIProvider(key)
+    return OpenAIProvider(key, models_from_env(DEFAULT_MODELS))
