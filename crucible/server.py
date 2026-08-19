@@ -26,6 +26,7 @@ import json
 import os
 import queue
 import secrets
+import sys
 import threading
 import time
 import uuid
@@ -62,8 +63,11 @@ SESSION_HOURS = 12
 STREAM_LIFETIME_SECONDS = 13 * 60
 HEARTBEAT_SECONDS = 15
 
-DEMO_USER = os.environ.get("CRUCIBLE_USER", "evaluator")
-DEMO_PASS = os.environ.get("CRUCIBLE_PASS", "crucible")
+# The demo credentials come from the environment and nowhere else. There is
+# no built-in pair: a deployment that forgot to set them refuses to start
+# (see serve()) rather than opening a paid model to whoever finds the URL.
+DEMO_USER = os.environ.get("CRUCIBLE_USER", "")
+DEMO_PASS = os.environ.get("CRUCIBLE_PASS", "")
 SECRET = os.environ.get("CRUCIBLE_SECRET", secrets.token_hex(32))
 
 TASKS = {
@@ -274,8 +278,16 @@ def valid_session(cookie: str) -> bool:
 
 
 def credentials_ok(user: str, password: str) -> bool:
+    if not DEMO_USER or not DEMO_PASS:
+        return False
     return (hmac.compare_digest(user, DEMO_USER)
             and hmac.compare_digest(password, DEMO_PASS))
+
+
+def missing_credentials() -> list[str]:
+    """The credential variables a deployment has left unset."""
+    return [name for name, value in (("CRUCIBLE_USER", DEMO_USER),
+                                     ("CRUCIBLE_PASS", DEMO_PASS)) if not value]
 
 
 # ------------------------------------------------------------------ runner
@@ -648,6 +660,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve() -> None:
+    unset = missing_credentials()
+    if unset:
+        print("crucible refuses to start: set " + " and ".join(unset)
+              + " in the environment. There are no built-in credentials, "
+              "so a deployment without them would be open to anyone.",
+              file=sys.stderr)
+        raise SystemExit(2)
     RUNS.mkdir(parents=True, exist_ok=True)
     port = int(os.environ.get("PORT", "8420"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)

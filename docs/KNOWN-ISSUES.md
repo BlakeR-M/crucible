@@ -4,9 +4,10 @@ Crucible was reviewed by its own pattern: four reviewers fanned out across the
 codebase, and every finding they raised went to independent verifiers
 instructed to refute it. Forty-five findings were raised and eighteen survived.
 
-Ten of those are fixed and the fixes are in the history. The rest are recorded
-here rather than quietly dropped, because a project whose argument is that a
-system should show what it threw away cannot keep its own list private.
+Eleven fixes are in the history, from that review and the ones that followed
+it, and they are listed below for the record. Nine findings stay open and are
+recorded here rather than quietly dropped, because a project whose argument is
+that a system should show what it threw away cannot keep its own list private.
 
 Each entry says what it costs and why it is still open.
 
@@ -127,6 +128,8 @@ is what "run the project's own tests" means. A hostile repository could put
 anything there. Inherent to the task rather than a flaw in the guard, and the
 reason the demo target is a repository we wrote.
 
-**Default credentials are in the source.** `evaluator` / `crucible`, overridden
-by environment variables in any real deployment. Printed in the README on
-purpose: the demo is meant to be opened.
+**There are no default credentials.** `CRUCIBLE_USER` and `CRUCIBLE_PASS`
+come from the environment, and `serve()` exits with code 2 and a plain message
+when either is unset, so a deployment that forgot them stays closed rather than
+opening a paid model to whoever finds the URL. The pair for the hosted demo is
+handed out in conversation, never written into the repository.
