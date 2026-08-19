@@ -1,3 +1,0 @@
-[console_scripts]
-crucible = crucible.cli:main
-crucible-server = crucible.server:serve

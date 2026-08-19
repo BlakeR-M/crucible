@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # No project dependencies: the tool is standard library only. pytest is
+      # the only thing installed, and only so one command runs every check
+      # file (tests/test_suite.py wraps the plain-script checks).
+      - run: python -m pip install --quiet pytest
+      # No network and no API keys. Every check runs against stand-in models.
+      - run: python -m pytest -q -p no:cacheprovider
+      - run: python -m crucible.cli --help
+      - run: python -m assay.problems

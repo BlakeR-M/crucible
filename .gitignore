@@ -12,6 +12,9 @@ demo_target/.crucible-scratch/
 __pycache__/
 *.pyc
 .venv/
+*.egg-info/
+build/
+dist/
 .DS_Store
 Thumbs.db
 

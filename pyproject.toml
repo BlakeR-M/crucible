@@ -14,7 +14,9 @@ keywords = ["code-review", "llm", "agents", "verification", "audit"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Quality Assurance",
 ]
 
@@ -26,7 +28,9 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/blakerm/crucible"
+Homepage = "https://github.com/BlakeR-M/crucible"
+Repository = "https://github.com/BlakeR-M/crucible"
+Issues = "https://github.com/BlakeR-M/crucible/issues"
 
 [project.scripts]
 crucible = "crucible.cli:main"
