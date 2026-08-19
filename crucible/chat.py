@@ -484,10 +484,13 @@ class ServerRuns:
     """
 
     def __init__(self, registry=None, *, runs_dir: Path | None = None,
-                 target: Path | None = None):
+                 target: Path | None = None, session_id: str = ""):
         self._registry = registry
         self._runs_dir = runs_dir
         self._target = target
+        # Which visitor is asking. A run the agent starts belongs to the
+        # session, so it runs on that session's key when one is attached.
+        self._session_id = session_id
 
     def _server(self):
         from . import server  # noqa: PLC0415 - deliberate, see the docstring
@@ -497,7 +500,7 @@ class ServerRuns:
         return dict(self._server().TASKS)
 
     def start(self, task_key: str) -> tuple[str, str]:
-        return self._server().start_run(task_key)
+        return self._server().start_run(task_key, sid=self._session_id)
 
     def view(self, run_id: str) -> RunView | None:
         registry = self._registry or self._server().REGISTRY

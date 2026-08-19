@@ -38,11 +38,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import repo
+from . import byok, repo
 from .ledger import Ledger
 from .orchestrator import Orchestrator
 from .policy import review_policy
-from .providers import Budget, provider_from_env
+from .providers import Budget, OpenAIProvider, Tier, provider_from_env
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -57,6 +57,18 @@ DAILY_CEILING_USD = float(os.environ.get("CRUCIBLE_DAILY_CEILING_USD", "8.00"))
 # this much and then is told so plainly.
 CHAT_CEILING_USD = float(os.environ.get("CRUCIBLE_CHAT_CEILING_USD", "0.40"))
 SESSION_HOURS = 12
+
+# A visitor may attach a provider key of their own for the session (see
+# byok.py). Runs on that key spend the visitor's money, so they carry their
+# own per-run ceiling and stay out of the operator's daily total. The hard
+# maximum bounds what a visitor can ask for, since the arena is still the one
+# making the calls and a runaway run is a runaway run whoever pays.
+BYO_ENABLED = os.environ.get("CRUCIBLE_BYO_ENABLED", "1").strip().lower() in (
+    "1", "true", "yes", "on")
+BYO_RUN_CEILING_MAX_USD = 5.00
+BYO_RUN_CEILING_USD = min(
+    BYO_RUN_CEILING_MAX_USD,
+    max(0.01, float(os.environ.get("CRUCIBLE_BYO_RUN_CEILING_USD", "1.00"))))
 
 # A visitor may also name a public repository. It is fetched under the same
 # rules a stranger's input always gets here: an allowlist of hosts, one commit
@@ -233,6 +245,45 @@ def pick_provider():
 
 REGISTRY = RunRegistry()
 
+# Visitor keys, in memory only. Nothing about this table reaches disk.
+KEYS = byok.VisitorKeys()
+
+
+def provider_for(sid: str, record: dict | None = None):
+    """The provider a session runs on, and what kind it is.
+
+    Order: the visitor's own key when one is attached, else the operator's
+    provider from the environment, else the free stand-in. Returns
+    (provider, kind, models) where kind is "visitor", "operator" or
+    "offline" and models is the per-tier table by tier name; the record is
+    what the ledger header and the stream carry, never the key.
+    """
+    record = record if record is not None else (KEYS.get(sid) if sid else None)
+    if record is not None:
+        provider = OpenAIProvider(record["key"], dict(record["models"]),
+                                  base_url=record["base_url"])
+        return provider, "visitor", _model_names(provider)
+    provider = pick_provider()
+    kind = "offline" if _offline_enabled() else "operator"
+    return provider, kind, _model_names(provider)
+
+
+def _model_names(provider) -> dict[str, str]:
+    """Per-tier model names for the record, by tier name. A provider without
+    a models table (the stand-in) reports its own name for every seat."""
+    models = getattr(provider, "models", None)
+    if not models:
+        return {tier.value: getattr(provider, "name", "unknown") for tier in Tier}
+    return {tier.value: models[tier] for tier in Tier}
+
+
+def redactor_for(provider) -> byok.Redactor:
+    """Scrubs the key the provider is holding, whoever it belongs to. The
+    operator's key gets the same treatment as a visitor's: a vendor error
+    that quotes an Authorization header must not become a ledger line."""
+    return byok.Redactor([getattr(provider, "_key", "")])
+
+
 # The one function that reaches the network. Held here by name so a test can
 # stand a local bare repository in for a host, and the rest of the run path
 # is exercised as deployed.
@@ -256,17 +307,29 @@ class ChatSessions:
     def get(self, sid: str):
         from .chat import ChatAgent, ServerRuns
 
+        # Which key the session is on right now. A visitor who attaches or
+        # forgets a key mid-conversation keeps their transcript and gets the
+        # new provider from the next turn; the provider is swapped in place
+        # rather than the agent rebuilt.
+        record = KEYS.get(sid)
+        stamp = ("visitor", record["key"]) if record else ("house", "")
+
         with self._lock:
             held = self._agents.get(sid)
             if held is not None:
                 held["seen"] = time.time()
+                if held["stamp"] != stamp:
+                    provider, kind, _ = provider_for(sid, record)
+                    held["agent"].provider = provider
+                    held["stamp"], held["kind"] = stamp, kind
                 return held["agent"]
 
         # Built outside the lock: constructing an agent reads the task list and
         # there is no reason to hold every other visitor up for it.
+        provider, kind, _ = provider_for(sid, record)
         agent = ChatAgent(
-            pick_provider(),
-            ServerRuns(REGISTRY, runs_dir=RUNS, target=TARGET),
+            provider,
+            ServerRuns(REGISTRY, runs_dir=RUNS, target=TARGET, session_id=sid),
             Budget(ceiling_usd=CHAT_CEILING_USD),
             session_id=sid,
         )
@@ -277,8 +340,19 @@ class ChatSessions:
             if existing is not None:
                 existing["seen"] = time.time()
                 return existing["agent"]
-            self._agents[sid] = {"agent": agent, "seen": time.time()}
+            self._agents[sid] = {"agent": agent, "seen": time.time(),
+                                 "stamp": stamp, "kind": kind}
             return agent
+
+    def kind(self, sid: str) -> str:
+        """Which provider kind the session's agent is on, for the stream."""
+        with self._lock:
+            held = self._agents.get(sid)
+            return held["kind"] if held else "operator"
+
+    def drop(self, sid: str) -> None:
+        with self._lock:
+            self._agents.pop(sid, None)
 
     def reap(self, idle_seconds: int = 3600) -> None:
         with self._lock:
@@ -320,6 +394,15 @@ def valid_session(cookie: str) -> bool:
         return False
 
 
+def session_expiry(cookie: str) -> float:
+    """When the signed cookie stops being valid, as a Unix time. Zero for a
+    cookie that does not parse; valid_session has already refused those."""
+    try:
+        return float(int(cookie.split(".", 1)[0]))
+    except (ValueError, IndexError):
+        return 0.0
+
+
 def credentials_ok(user: str, password: str) -> bool:
     if not DEMO_USER or not DEMO_PASS:
         return False
@@ -348,14 +431,29 @@ def plan_repo(repo_url: str, ref: str | None) -> tuple[str, str | None]:
     return url, ref
 
 
+def byo_ceiling(requested) -> float:
+    """The per-run ceiling for a visitor-key run: the deployment's default,
+    or the visitor's own figure, and never past the hard maximum."""
+    try:
+        wanted = float(requested) if requested not in (None, "") else BYO_RUN_CEILING_USD
+    except (TypeError, ValueError):
+        wanted = BYO_RUN_CEILING_USD
+    return min(BYO_RUN_CEILING_MAX_USD, max(0.01, wanted))
+
+
 def start_run(task_key: str, repo_url: str | None = None,
-              ref: str | None = None) -> tuple[str | None, str]:
+              ref: str | None = None, *, sid: str = "",
+              ceiling_usd=None) -> tuple[str | None, str]:
     """Spawn a run, or say why not.
 
     With a repository URL, the run clones it first, in the run's own thread,
     so the visitor sees the clone as stream events rather than as a request
     that hangs. Admission (concurrency, daily ceiling, host allowlist) is
     decided here, before anything is spent or fetched.
+
+    A session with a key attached runs on that key: the operator's daily
+    ceiling is not consulted, the run's ceiling is the visitor's, and the
+    spend is booked to the session rather than to the day.
     """
     source: dict = {}
     if repo_url:
@@ -364,19 +462,22 @@ def start_run(task_key: str, repo_url: str | None = None,
         except repo.RepoError as exc:
             return None, str(exc)
         source = {"repo_url": url, "repo_ref": ref}
+    visitor = KEYS.get(sid) if (sid and BYO_ENABLED) else None
     if REGISTRY.active() >= MAX_CONCURRENT_RUNS:
         return None, (f"{MAX_CONCURRENT_RUNS} runs are already in flight. "
                       f"The arena runs a bounded number at once, deliberately. "
                       f"Try again in a minute.")
-    if REGISTRY.day_spend() >= DAILY_CEILING_USD:
+    if visitor is None and REGISTRY.day_spend() >= DAILY_CEILING_USD:
         return None, (f"the daily ceiling of ${DAILY_CEILING_USD:.2f} is spent. "
-                      f"It resets at midnight UTC.")
+                      f"It resets at midnight UTC. Attach a key of your own "
+                      f"to run against a live model now.")
     if not source and not TARGET.is_dir():
         return None, "the demo target codebase is missing from this deployment"
 
     task = TASKS.get(task_key, TASKS["full"])
     run_id = uuid.uuid4().hex[:12]
     REGISTRY.create(run_id, source)
+    ceiling = byo_ceiling(ceiling_usd) if visitor else RUN_CEILING_USD
 
     def finish(reason: str, spent: float = 0.0) -> None:
         """Close a run out so nothing is left hanging.
@@ -420,8 +521,12 @@ def start_run(task_key: str, repo_url: str | None = None,
         return result
 
     def work() -> None:
-        ledger = Ledger(RUNS / f"{run_id}.jsonl")
-        budget = Budget(ceiling_usd=RUN_CEILING_USD)
+        # The redactor is bound before the provider exists so every exit path
+        # below scrubs through the same object; the key is registered the
+        # moment the provider is built.
+        redact = byok.Redactor()
+        ledger = Ledger(RUNS / f"{run_id}.jsonl", scrub=redact.scrub_value)
+        budget = Budget(ceiling_usd=ceiling)
         scratch: Path | None = None
         try:
             if source:
@@ -435,16 +540,23 @@ def start_run(task_key: str, repo_url: str | None = None,
                           "tests_enabled": tests_enabled}
             else:
                 workspace, header, tests_enabled = TARGET, {}, True
-            provider = pick_provider()
+            provider, kind, models = provider_for(sid, visitor)
+            redact.add(getattr(provider, "_key", ""))
+            # The record says who paid and which models sat in each seat.
+            # The key itself is in neither the header nor anywhere else the
+            # ledger or the stream can reach.
+            header = {**header, "provider_kind": kind, "models": models}
+            REGISTRY.publish(run_id, {"kind": "provider", "provider_kind": kind,
+                                      "models": models, "ceiling_usd": ceiling})
             orchestrator = Orchestrator(
                 provider, workspace,
                 review_policy(workspace, run_tests=tests_enabled), ledger, budget,
-                emit=lambda event: REGISTRY.publish(run_id, event),
+                emit=lambda event: REGISTRY.publish(run_id, redact.scrub_value(event)),
                 source=header,
             )
             orchestrator.run(task)
         except BaseException as exc:  # noqa: BLE001 - the browser must be told
-            finish(f"{type(exc).__name__}: {exc}", budget.spent_usd)
+            finish(redact.scrub(f"{type(exc).__name__}: {exc}"), budget.spent_usd)
         finally:
             if scratch is not None:
                 # The clone lives exactly as long as the run. Removed here on
@@ -455,9 +567,14 @@ def start_run(task_key: str, repo_url: str | None = None,
                 try:
                     repo.remove_tree(scratch)
                 except OSError as exc:
-                    print(f"[run {run_id}] could not remove {scratch}: "
-                          f"{type(exc).__name__}: {exc}", file=sys.stderr)
-            REGISTRY.add_spend(budget.spent_usd)
+                    print(redact.scrub(f"[run {run_id}] could not remove {scratch}: "
+                                       f"{type(exc).__name__}: {exc}"), file=sys.stderr)
+            # A visitor's spend is the visitor's. It is shown to them and
+            # kept out of the operator's day, which is the whole point.
+            if visitor is not None:
+                KEYS.add_spend(sid, budget.spent_usd)
+            else:
+                REGISTRY.add_spend(budget.spent_usd)
             REGISTRY.reap()
 
     try:
@@ -469,12 +586,14 @@ def start_run(task_key: str, repo_url: str | None = None,
     return run_id, ""
 
 
-def admit_run(payload: dict) -> tuple[int, dict]:
+def admit_run(payload: dict, sid: str = "") -> tuple[int, dict]:
     """The POST /api/run body, decided. Returns (status, json body).
 
     A refused repository reference is a 400 with the sentence to show; a
     full arena or a spent day is a 429, as before. Kept out of the handler so
-    a check can call it without a socket.
+    a check can call it without a socket. The session id is what ties the run
+    to a visitor's key, when one is attached; a ceiling_usd in the body is
+    honoured only for such a run, up to the hard maximum.
     """
     task = str(payload.get("task", "full") or "full")
     repo_url = str(payload.get("repo_url") or "").strip()
@@ -488,10 +607,52 @@ def admit_run(payload: dict) -> tuple[int, dict]:
             plan_repo(repo_url, ref)
         except repo.RepoError as exc:
             return 400, {"error": str(exc)}
-    run_id, refusal = start_run(task, repo_url or None, ref)
+    ceiling = payload.get("ceiling_usd")
+    if ceiling not in (None, ""):
+        try:
+            float(ceiling)
+        except (TypeError, ValueError):
+            return 400, {"error": "ceiling_usd must be a number of dollars"}
+    run_id, refusal = start_run(task, repo_url or None, ref, sid=sid,
+                                ceiling_usd=ceiling)
     if run_id is None:
         return 429, {"error": refusal}
     return 200, {"run_id": run_id}
+
+
+def admit_key(payload: dict, sid: str, session_cookie: str) -> tuple[int, dict]:
+    """The POST /api/key body, decided. Validates against the provider, then
+    holds the key for the session, or returns 400 and holds nothing."""
+    if not BYO_ENABLED:
+        return 404, {"error": "this deployment does not take visitor keys"}
+    if not sid:
+        return 400, {"error": "no session to attach the key to"}
+    models = payload.get("models")
+    if models is not None and not isinstance(models, dict):
+        return 400, {"error": "models must be an object of planner, worker, verifier"}
+    try:
+        record = byok.validate_key(payload.get("provider"), payload.get("api_key"),
+                                   models)
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    KEYS.attach(sid, record, ceiling_usd=byo_ceiling(payload.get("ceiling_usd")),
+                expires=session_expiry(session_cookie))
+    return 200, KEYS.status(sid)
+
+
+def byo_status(sid: str) -> dict:
+    """What GET /api/key and /api/tasks say about the session's key: whether
+    one is attached, and the offer if not. Never the key."""
+    status = KEYS.status(sid) if sid else {"attached": False}
+    return {
+        **status,
+        "enabled": BYO_ENABLED,
+        "run_ceiling_usd": BYO_RUN_CEILING_USD,
+        "run_ceiling_max_usd": BYO_RUN_CEILING_MAX_USD,
+        "providers": {name: {"models": list(spec["models"]),
+                             "defaults": {t.value: m for t, m in spec["defaults"].items()}}
+                      for name, spec in byok.PROVIDERS.items()},
+    }
 
 
 # ----------------------------------------------------------------- handler
@@ -606,7 +767,12 @@ class Handler(BaseHTTPRequestHandler):
                              "repo_max_mb": REPO_MAX_BYTES / 1_000_000,
                              "repo_max_files": REPO_MAX_FILES,
                              "offline": _offline_enabled(),
+                             "byo": byo_status(self._sid()),
                              "runs": REGISTRY.listing()})
+            return
+
+        if path == "/api/key":
+            self._json(200, byo_status(self._sid()))
             return
 
         if path.startswith("/api/stream/"):
@@ -685,11 +851,60 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 self._json(400, {"error": "bad json"})
                 return
-            status, body = admit_run(payload)
+            status, body = admit_run(payload, self._sid())
             self._json(status, body)
             return
 
+        if route.path == "/api/key":
+            # Bounded before it is parsed: a key plus three model names fits
+            # in far less than this.
+            if length > 4096:
+                self._json(413, {"error": "that body is larger than a key needs"})
+                return
+            try:
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+            except json.JSONDecodeError:
+                self._json(400, {"error": "bad json"})
+                return
+            if not isinstance(payload, dict):
+                self._json(400, {"error": "bad json"})
+                return
+            status, body = admit_key(payload, self._sid(),
+                                     self._cookie("crucible_session"))
+            self._json(status, body)
+            return
+
+        if route.path == "/api/logout":
+            self._logout()
+            return
+
         self._send(404, b"not found", "text/plain")
+
+    # ---------------------------------------------------------- DELETE
+
+    def do_DELETE(self) -> None:
+        route = urlparse(self.path)
+        if not self._authed():
+            self._json(401, {"error": "not signed in"})
+            return
+        if route.path == "/api/key":
+            KEYS.detach(self._sid())
+            self._json(200, byo_status(self._sid()))
+            return
+        self._send(404, b"not found", "text/plain")
+
+    def _logout(self) -> None:
+        """Forget the key, drop the conversation, expire both cookies."""
+        sid = self._sid()
+        KEYS.detach(sid)
+        CHATS.drop(sid)
+        gone = "Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0"
+        self.send_response(303)
+        self.send_header("Location", "/login")
+        self.send_header("Content-Length", "0")
+        self.send_header("Set-Cookie", f"crucible_session=; {gone}")
+        self.send_header("Set-Cookie", f"crucible_sid=; {gone}")
+        self.end_headers()
 
     # ----------------------------------------------------------- stream
 
@@ -708,7 +923,10 @@ class Handler(BaseHTTPRequestHandler):
         spinner.
         """
         agent = CHATS.get(sid)
+        kind = CHATS.kind(sid)
+        redact = redactor_for(agent.provider)
         CHATS.reap()
+        KEYS.reap()
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -720,23 +938,29 @@ class Handler(BaseHTTPRequestHandler):
 
         def push(event: dict) -> bool:
             try:
+                event = redact.scrub_value(event)
                 self.wfile.write(f"data: {json.dumps(event)}\n\n".encode("utf-8"))
                 self.wfile.flush()
                 return True
             except (BrokenPipeError, ConnectionResetError, OSError):
                 return False
 
+        spent_before = agent.budget.spent_usd
         try:
             for event in agent.stream(message):
                 if not push(event):
                     return
         except Exception as exc:  # noqa: BLE001 - the visitor must be told
             push({"kind": "chat_error",
-                  "text": f"{type(exc).__name__}: {exc}"[:300]})
+                  "text": redact.scrub(f"{type(exc).__name__}: {exc}")[:300]})
         finally:
+            if kind == "visitor":
+                KEYS.add_spend(sid, agent.budget.spent_usd - spent_before)
             push({"kind": "chat_done",
                   "spent_usd": round(agent.budget.spent_usd, 5),
-                  "ceiling_usd": CHAT_CEILING_USD})
+                  "ceiling_usd": CHAT_CEILING_USD,
+                  "provider_kind": kind,
+                  "session_spend_usd": KEYS.status(sid).get("spent_usd", 0.0)})
 
     def _stream(self, run_id: str) -> None:
         subscription = REGISTRY.subscribe(run_id)
@@ -823,6 +1047,9 @@ def serve() -> None:
     print(f"  repos from  {', '.join(REPO_HOSTS)}  "
           f"(cap {REPO_MAX_BYTES / 1_000_000:.0f} MB, {REPO_MAX_FILES} files)")
     print(f"  run ceiling ${RUN_CEILING_USD:.2f}   daily ${DAILY_CEILING_USD:.2f}")
+    print(f"  visitor keys {'on' if BYO_ENABLED else 'off'}   "
+          f"byo run ceiling ${BYO_RUN_CEILING_USD:.2f} "
+          f"(max ${BYO_RUN_CEILING_MAX_USD:.2f})")
     print(f"  sign in as  {DEMO_USER}")
     server.serve_forever()
 
