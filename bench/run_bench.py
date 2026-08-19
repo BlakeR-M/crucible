@@ -312,7 +312,7 @@ def _verdict(a: dict, b: dict) -> None:
     checks = [
         ("malformed replies fall 80%+",
          a_bad > 0 and drop >= 80,
-         f"{a_bad} -> {b_bad} per run ({drop:.0f}% fall)"
+         f"{a_bad:.1f} -> {b_bad:.1f} per run ({drop:.0f}% fall)"
          if a_bad else "unconstrained arm had none to fall"),
         ("constrained recovers 6 of 9+",
          found_b >= 6, f"{found_b}/9 mean"),

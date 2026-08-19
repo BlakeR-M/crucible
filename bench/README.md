@@ -19,14 +19,23 @@ finding that out in an afternoon is the cheapest possible outcome.
 
 ## The arms
 
-| arm | decoding | otherwise |
-|-----|----------|-----------|
-| A | asked in the prompt for one JSON object | identical |
-| B | reply constrained during sampling by a per-role JSON schema | identical |
+| arm | decoding | thinking | otherwise |
+|-----|----------|----------|-----------|
+| A | asked in the prompt for one JSON object | off | identical |
+| B | reply constrained during sampling by a per-role JSON schema | off | identical |
+| C | asked in the prompt for one JSON object | on | identical |
+| D | reply constrained during sampling by a per-role JSON schema | on | identical |
 
-Held still across both: the same weights and quantisation, the same task, the
-same workspace, the same temperature, the same seed sequence, the same serial
-execution so agents never interleave differently, and the same disabled
+Two factors, four arms. Constraint was the question; thinking turned out to
+matter as much and had to be separated from it rather than fixed at one level.
+The A/B pair is the measurement the numbers below come from. The C/D pair sits
+under `results/starved/` and has its own section at the end, because its
+replies were starved of output tokens and it measures the allowance more than
+the constraint.
+
+Held still across A and B: the same weights and quantisation, the same task,
+the same workspace, the same temperature, the same seed sequence, the same
+serial execution so agents never interleave differently, and the same disabled
 thinking. The constraint is the only difference.
 
 Each arm runs five times. The first version of this ran each arm once at
@@ -112,16 +121,72 @@ confidently-shaped nonsense. **A high recovery number bought with degraded
 reasoning is a failure, not a win**, and writing that down in advance is what
 stops it being argued into a win afterwards.
 
+## What came out
+
+Five runs per arm, in `results/arm-A.json` and `results/arm-B.json`, with
+`results/analysis.json` recomputed from the saved replies. Read straight off
+`python -m bench.run_bench --compare` and `python -m bench.analyse`:
+
+| measure | A (prompted) | B (constrained) |
+|---|---|---|
+| replies not strict (salvaged + dead) | 31 of 239, 12.9% | 2 of 237, 0.8% |
+| dead steps per run | 3.8 | 0.4 |
+| findings raised per run | 3.4 | 5.6 |
+| planted defects found at the hunt stage, per run | 1.8 | 3.2 |
+| union of defects found across the five runs | 3 of 9 | 7 of 9 |
+| findings that survived verification, all runs | 0 | 0 |
+| output tokens, all runs | 47,709 | 40,431 |
+
+Against the bars:
+
+- **Malformed replies fall 80% or more: cleared.** 6.2 to 0.4 per run, a 94%
+  fall. The constraint does exactly what it says about shape.
+- **6 of 9 defects recovered in B: missed, on the metric the gate uses.** The
+  gate scores defects that survive verification, and that number is zero in
+  every run of both arms, so `--compare` prints `FAIL constrained recovers 6
+  of 9+ 0/9 mean`. At the hunt stage B reaches 3.2 per run and 7 of 9 across
+  the union, a 78% lift over A. That lift is real and it is not the bar that
+  was written down.
+- **Reasoning within about 15%: cleared, and only vacuously.** 0 versus 0 on
+  survivors; at the hunt stage B is ahead, so the Format Tax did not show up
+  at this operating point.
+
+The zero survivors are the third finding in the top-level README: this model's
+verifiers, told that uncertainty is a refutation, refuted everything, including
+findings that matched planted defects. Constrained decoding fixed the shape of
+what the model said and left what it decided alone.
+
+## The thinking-on arms, C and D
+
+`results/starved/arm-C.json` and `arm-D.json` are the same design with the
+model's thinking switched on, five runs each. They are kept because they were
+run, and kept apart because they do not measure what they were meant to. The
+output allowance per reply was 2,200 tokens, thinking counts against it, and on
+most steps the model was still thinking when the allowance ran out: every dead
+reply in both arms finished with `finish: length` and an empty answer. Dead
+replies were 39% of C and 43% of D, against 7.9% and 0.8% with thinking off.
+
+What did come through: C found 1.4 planted defects per run at the hunt stage
+and D found 1.0, each with a union of 4 of 9, and between them three findings
+survived verification across ten runs (one in C, two in D), the only survivors
+this model produced anywhere. Runs took 20 to 30 minutes against about a minute
+and a half. Rerunning this pair with an allowance that lets the thinking finish
+is the open next step, and until it is run the numbers above are the numbers.
+
 ## Running it
 
 ```bash
 python -m bench.run_bench --arm A --runs 5
 python -m bench.run_bench --arm B --runs 5
+python -m bench.run_bench --arm C --runs 5   # thinking on; see the section above
+python -m bench.run_bench --arm D --runs 5
 python -m bench.run_bench --compare
 python -m bench.analyse
 ```
 
-Every raw reply is saved. `analyse.py` recomputes every number from the saved
+The runs need a llama.cpp server on `http://127.0.0.1:8080` with the model
+above loaded; `--compare` and `analyse` need only the saved results and run
+anywhere. Every raw reply is saved. `analyse.py` recomputes every number from the saved
 text, so any metric added later is applied to both arms by the same code on the
 same day, and the saved runs stay checkable by anyone who wants to disagree with
 the arithmetic.

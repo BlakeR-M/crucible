@@ -1,0 +1,122 @@
+{
+  "A": {
+    "runs": 5,
+    "overall": {
+      "strict": 208,
+      "salvaged": 12,
+      "dead": 19
+    },
+    "by_kind": {
+      "call": {
+        "strict": 133,
+        "salvaged": 3,
+        "dead": 0
+      },
+      "done": {
+        "strict": 73,
+        "salvaged": 6,
+        "dead": 0
+      },
+      "answer": {
+        "strict": 2,
+        "salvaged": 3,
+        "dead": 0
+      },
+      "none": {
+        "strict": 0,
+        "salvaged": 0,
+        "dead": 19
+      }
+    },
+    "by_role": {
+      "prober": {
+        "strict": 28,
+        "salvaged": 3,
+        "dead": 1
+      },
+      "planner": {
+        "strict": 2,
+        "salvaged": 3,
+        "dead": 0
+      },
+      "hunter": {
+        "strict": 126,
+        "salvaged": 1,
+        "dead": 13
+      },
+      "verifier": {
+        "strict": 52,
+        "salvaged": 5,
+        "dead": 5
+      }
+    },
+    "incomplete_done": 2,
+    "output_tokens": 47709,
+    "generation_seconds": 510.8,
+    "top_reasons": {
+      "not valid JSON: Expecting ',' delimiter": 10,
+      "not valid JSON: Expecting value": 10,
+      "not valid JSON: Invalid control character at": 5,
+      "not valid JSON: Unterminated string starting at": 4,
+      "not valid JSON: Extra data": 2
+    }
+  },
+  "B": {
+    "runs": 5,
+    "overall": {
+      "strict": 235,
+      "salvaged": 0,
+      "dead": 2
+    },
+    "by_kind": {
+      "call": {
+        "strict": 117,
+        "salvaged": 0,
+        "dead": 0
+      },
+      "done": {
+        "strict": 113,
+        "salvaged": 0,
+        "dead": 0
+      },
+      "answer": {
+        "strict": 5,
+        "salvaged": 0,
+        "dead": 0
+      },
+      "none": {
+        "strict": 0,
+        "salvaged": 0,
+        "dead": 2
+      }
+    },
+    "by_role": {
+      "prober": {
+        "strict": 29,
+        "salvaged": 0,
+        "dead": 0
+      },
+      "planner": {
+        "strict": 5,
+        "salvaged": 0,
+        "dead": 0
+      },
+      "hunter": {
+        "strict": 116,
+        "salvaged": 0,
+        "dead": 1
+      },
+      "verifier": {
+        "strict": 85,
+        "salvaged": 0,
+        "dead": 1
+      }
+    },
+    "incomplete_done": 0,
+    "output_tokens": 40431,
+    "generation_seconds": 445.9,
+    "top_reasons": {
+      "not valid JSON: Unterminated string starting at": 2
+    }
+  }
+}
