@@ -6,9 +6,12 @@ every line of what serves it without leaving this repository.
 
 Three things worth knowing about the design.
 
-The workspace is fixed. A visitor picks a task, never a path. The policy would
-refuse an escape anyway, but a public arena that accepts a directory from a
-stranger is a different and much worse thing than one that does not.
+The workspace is fixed, or fetched. A visitor picks a task, and may name a
+public repository on an allowlisted host, which is cloned into a private
+temporary directory for the run and removed after it. A visitor never names a
+path. The policy would refuse an escape anyway, but a public arena that
+accepts a directory from a stranger is a different and much worse thing than
+one that does not.
 
 The event stream is per run and buffered from the start, so a browser that
 connects late, or reconnects after a dropped connection, replays the run from
@@ -35,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import repo
 from .ledger import Ledger
 from .orchestrator import Orchestrator
 from .policy import review_policy
@@ -53,6 +57,17 @@ DAILY_CEILING_USD = float(os.environ.get("CRUCIBLE_DAILY_CEILING_USD", "8.00"))
 # this much and then is told so plainly.
 CHAT_CEILING_USD = float(os.environ.get("CRUCIBLE_CHAT_CEILING_USD", "0.40"))
 SESSION_HOURS = 12
+
+# A visitor may also name a public repository. It is fetched under the same
+# rules a stranger's input always gets here: an allowlist of hosts, one commit
+# at depth one, no submodules, a size cap and a file cap, a clone timeout, and
+# a workspace that exists for the run and is removed after it. The review
+# policy is then scoped to that workspace and nothing else on the box.
+REPO_HOSTS = tuple(h.strip() for h in os.environ.get(
+    "CRUCIBLE_REPO_HOSTS", ",".join(repo.DEFAULT_HOSTS)).split(",") if h.strip())
+REPO_MAX_BYTES = int(float(os.environ.get("CRUCIBLE_REPO_MAX_MB", "50")) * 1_000_000)
+REPO_MAX_FILES = int(os.environ.get("CRUCIBLE_REPO_MAX_FILES", "5000"))
+REPO_CLONE_TIMEOUT_S = float(os.environ.get("CRUCIBLE_REPO_CLONE_TIMEOUT_S", "120"))
 
 # Railway's edge closes any HTTP request at 15 minutes, streaming or not, and
 # closes one that has been silent for 5. So a stream is retired on our own
@@ -113,11 +128,14 @@ class RunRegistry:
                 return None
             return max(self._runs.values(), key=lambda r: r["started"])["id"]
 
-    def create(self, run_id: str) -> dict:
+    def create(self, run_id: str, source: dict | None = None) -> dict:
         with self._lock:
             state = {
                 "id": run_id, "events": [], "finished": False,
                 "subscribers": [], "started": time.time(), "report": None,
+                # Where the code came from: {} for the demo target, otherwise
+                # repo_url and repo_ref at creation, commit_sha once cloned.
+                "source": dict(source or {}),
             }
             self._runs[run_id] = state
             return state
@@ -125,6 +143,20 @@ class RunRegistry:
     def get(self, run_id: str) -> dict | None:
         with self._lock:
             return self._runs.get(run_id)
+
+    def set_source(self, run_id: str, **fields) -> None:
+        with self._lock:
+            state = self._runs.get(run_id)
+            if state is not None:
+                state["source"].update(fields)
+
+    def listing(self) -> list[dict]:
+        """Every run the registry still holds, newest first, with its source."""
+        with self._lock:
+            rows = sorted(self._runs.values(), key=lambda r: -r["started"])
+            return [{"run_id": r["id"], "finished": r["finished"],
+                     "started": r["started"], "source": dict(r["source"])}
+                    for r in rows]
 
     def publish(self, run_id: str, event: dict) -> None:
         """Append to the buffer and push to anyone listening."""
@@ -194,6 +226,11 @@ def pick_provider():
 
 
 REGISTRY = RunRegistry()
+
+# The one function that reaches the network. Held here by name so a test can
+# stand a local bare repository in for a host, and the rest of the run path
+# is exercised as deployed.
+clone = repo.clone
 
 
 class ChatSessions:
@@ -292,8 +329,35 @@ def missing_credentials() -> list[str]:
 
 # ------------------------------------------------------------------ runner
 
-def start_run(task_key: str) -> tuple[str | None, str]:
-    """Spawn a run, or say why not."""
+def plan_repo(repo_url: str, ref: str | None) -> tuple[str, str | None]:
+    """Parse and admit a visitor's repository reference, or raise RepoError
+    with the sentence to show them. No clone happens here."""
+    url, inline_ref = repo.parse_repo_ref(repo_url)
+    ref = (ref or "").strip() or None
+    if inline_ref and ref and inline_ref != ref:
+        raise repo.RepoUrlError("the URL names one ref and the field another; "
+                                "pick one")
+    ref = ref or inline_ref
+    repo.check_host(url, REPO_HOSTS)
+    return url, ref
+
+
+def start_run(task_key: str, repo_url: str | None = None,
+              ref: str | None = None) -> tuple[str | None, str]:
+    """Spawn a run, or say why not.
+
+    With a repository URL, the run clones it first, in the run's own thread,
+    so the visitor sees the clone as stream events rather than as a request
+    that hangs. Admission (concurrency, daily ceiling, host allowlist) is
+    decided here, before anything is spent or fetched.
+    """
+    source: dict = {}
+    if repo_url:
+        try:
+            url, ref = plan_repo(repo_url, ref)
+        except repo.RepoError as exc:
+            return None, str(exc)
+        source = {"repo_url": url, "repo_ref": ref}
     if REGISTRY.active() >= MAX_CONCURRENT_RUNS:
         return None, (f"{MAX_CONCURRENT_RUNS} runs are already in flight. "
                       f"The arena runs a bounded number at once, deliberately. "
@@ -301,12 +365,12 @@ def start_run(task_key: str) -> tuple[str | None, str]:
     if REGISTRY.day_spend() >= DAILY_CEILING_USD:
         return None, (f"the daily ceiling of ${DAILY_CEILING_USD:.2f} is spent. "
                       f"It resets at midnight UTC.")
-    if not TARGET.is_dir():
+    if not source and not TARGET.is_dir():
         return None, "the demo target codebase is missing from this deployment"
 
     task = TASKS.get(task_key, TASKS["full"])
     run_id = uuid.uuid4().hex[:12]
-    REGISTRY.create(run_id)
+    REGISTRY.create(run_id, source)
 
     def finish(reason: str, spent: float = 0.0) -> None:
         """Close a run out so nothing is left hanging.
@@ -325,19 +389,57 @@ def start_run(task_key: str) -> tuple[str | None, str]:
             "halted": reason[:200],
         })
 
+    def fetch(scratch: Path) -> repo.CloneResult:
+        """Clone into the run's private directory, narrating to the stream."""
+        REGISTRY.publish(run_id, {"kind": "clone_started",
+                                  "repo_url": source["repo_url"],
+                                  "repo_ref": source["repo_ref"]})
+        try:
+            result = clone(
+                source["repo_url"], source["repo_ref"], scratch / "checkout",
+                timeout_s=REPO_CLONE_TIMEOUT_S, max_bytes=REPO_MAX_BYTES,
+                max_files=REPO_MAX_FILES, allowed_hosts=REPO_HOSTS,
+            )
+        except repo.RepoError as exc:
+            REGISTRY.publish(run_id, {"kind": "clone_failed",
+                                      "reason": str(exc)[:300]})
+            raise
+        REGISTRY.set_source(run_id, commit_sha=result.commit_sha)
+        REGISTRY.publish(run_id, {
+            "kind": "clone_finished", "commit_sha": result.commit_sha,
+            "files": result.files, "bytes": result.bytes,
+        })
+        return result
+
     def work() -> None:
         ledger = Ledger(RUNS / f"{run_id}.jsonl")
         budget = Budget(ceiling_usd=RUN_CEILING_USD)
+        scratch: Path | None = None
         try:
+            if source:
+                scratch = repo.workspace_dir()
+                fetched = fetch(scratch)
+                # The record names what the visitor asked for, canonicalised
+                # at admission, and the commit the clone actually stood at.
+                workspace = fetched.path
+                header = {**source, "commit_sha": fetched.commit_sha}
+            else:
+                workspace, header = TARGET, {}
             provider = pick_provider()
             orchestrator = Orchestrator(
-                provider, TARGET, review_policy(TARGET), ledger, budget,
+                provider, workspace, review_policy(workspace), ledger, budget,
                 emit=lambda event: REGISTRY.publish(run_id, event),
+                source=header,
             )
             orchestrator.run(task)
         except BaseException as exc:  # noqa: BLE001 - the browser must be told
             finish(f"{type(exc).__name__}: {exc}", budget.spent_usd)
         finally:
+            if scratch is not None:
+                # The clone lives exactly as long as the run. Removed here on
+                # every path out, so a failed review leaves no stranger's tree
+                # on the box.
+                repo.remove_tree(scratch)
             REGISTRY.add_spend(budget.spent_usd)
             REGISTRY.reap()
 
@@ -348,6 +450,31 @@ def start_run(task_key: str) -> tuple[str | None, str]:
         finish(f"could not start the run: {exc}")
         return None, "the server could not start another run just now"
     return run_id, ""
+
+
+def admit_run(payload: dict) -> tuple[int, dict]:
+    """The POST /api/run body, decided. Returns (status, json body).
+
+    A refused repository reference is a 400 with the sentence to show; a
+    full arena or a spent day is a 429, as before. Kept out of the handler so
+    a check can call it without a socket.
+    """
+    task = str(payload.get("task", "full") or "full")
+    repo_url = str(payload.get("repo_url") or "").strip()
+    ref = str(payload.get("ref") or "").strip() or None
+    if repo_url:
+        # Bounded before it is parsed. A URL is a stranger's string too.
+        if len(repo_url) > 500 or (ref and len(ref) > 200):
+            return 400, {"error": "that address is longer than any repository "
+                                  "URL needs to be"}
+        try:
+            plan_repo(repo_url, ref)
+        except repo.RepoError as exc:
+            return 400, {"error": str(exc)}
+    run_id, refusal = start_run(task, repo_url or None, ref)
+    if run_id is None:
+        return 429, {"error": refusal}
+    return 200, {"run_id": run_id}
 
 
 # ----------------------------------------------------------------- handler
@@ -456,7 +583,11 @@ class Handler(BaseHTTPRequestHandler):
                                        for k, v in TASKS.items()],
                              "ceiling_usd": RUN_CEILING_USD,
                              "active": REGISTRY.active(),
-                             "max_concurrent": MAX_CONCURRENT_RUNS})
+                             "max_concurrent": MAX_CONCURRENT_RUNS,
+                             "repo_hosts": list(REPO_HOSTS),
+                             "repo_max_mb": REPO_MAX_BYTES / 1_000_000,
+                             "repo_max_files": REPO_MAX_FILES,
+                             "runs": REGISTRY.listing()})
             return
 
         if path.startswith("/api/stream/"):
@@ -535,11 +666,8 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 self._json(400, {"error": "bad json"})
                 return
-            run_id, refusal = start_run(str(payload.get("task", "full")))
-            if run_id is None:
-                self._json(429, {"error": refusal})
-                return
-            self._json(200, {"run_id": run_id})
+            status, body = admit_run(payload)
+            self._json(status, body)
             return
 
         self._send(404, b"not found", "text/plain")
@@ -673,6 +801,8 @@ def serve() -> None:
     server.daemon_threads = True
     print(f"crucible listening on :{port}")
     print(f"  target      {TARGET}")
+    print(f"  repos from  {', '.join(REPO_HOSTS)}  "
+          f"(cap {REPO_MAX_BYTES / 1_000_000:.0f} MB, {REPO_MAX_FILES} files)")
     print(f"  run ceiling ${RUN_CEILING_USD:.2f}   daily ${DAILY_CEILING_USD:.2f}")
     print(f"  sign in as  {DEMO_USER}")
     server.serve_forever()

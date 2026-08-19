@@ -48,6 +48,15 @@
         <p><b>Nothing has run yet in this session.</b></p>
         <p>Ask the agent on the left to start a review, or say <em>&ldquo;show me the last run&rdquo;</em>
            to see one that already finished.</p>
+        <form class="repo" id="repo" autocomplete="off">
+          <label for="repo-url">Review a public repository</label>
+          <div class="row">
+            <input id="repo-url" type="text" inputmode="url" spellcheck="false"
+                   placeholder="https://github.com/org/repo@main">
+            <button type="submit" id="repo-go">Review</button>
+          </div>
+          <p class="hint" id="repo-hint"></p>
+        </form>
       </div>
       <div id="thread"></div>
       <div id="closing"></div>

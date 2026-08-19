@@ -216,6 +216,9 @@ function reset(runId) {
 
 function handle(e) {
   switch (e.kind) {
+    case 'clone_started':   return onCloneStarted(e);
+    case 'clone_finished':  return onCloneFinished(e);
+    case 'clone_failed':    return onCloneFailed(e);
     case 'run_started':     return onStart(e);
     case 'phase':           return onPhase(e);
     case 'agent_started':   return onAgent(e);
@@ -252,8 +255,38 @@ function node(parentKids, { name, role, live }) {
 function onStart(e) {
   const root = node($('thread'), { name: 'Planner', role: 'splitting the work', live: true });
   root.acts.append(mkAct('task', e.task || ''));
+  if (e.repo_url) {
+    root.acts.append(mkAct('source', e.repo_url + (e.commit_sha ? ' @ ' + String(e.commit_sha).slice(0, 12) : '')));
+  }
   S.agents.set('__planner', root);
   $('state').textContent = 'running';
+}
+
+/* The clone, narrated. It sits above the planner in the thread, since it
+ * happens before there is a planner, and it is the one part of a URL run
+ * a visitor could not otherwise see. */
+function onCloneStarted(e) {
+  const n = node($('thread'), { name: 'Fetching', role: e.repo_url + (e.repo_ref ? ' @ ' + e.repo_ref : ''), live: true });
+  S.agents.set('__clone', n);
+  $('state').textContent = 'fetching';
+  $('tick-state').textContent = 'cloning the repository';
+}
+
+function onCloneFinished(e) {
+  const n = S.agents.get('__clone');
+  if (!n) return;
+  n.who.classList.remove('live'); n.who.classList.add('done');
+  n.acts.append(mkAct('commit', String(e.commit_sha || '').slice(0, 12)));
+  n.acts.append(mkAct('checkout', `${e.files} files, ${((e.bytes || 0) / 1e6).toFixed(2)} MB, history removed`));
+}
+
+function onCloneFailed(e) {
+  const n = S.agents.get('__clone');
+  if (n) {
+    n.who.classList.remove('live'); n.who.classList.add('done');
+    n.acts.append(mkAct('stopped', e.reason || 'the clone did not complete', true));
+  }
+  $('state').textContent = 'stopped';
 }
 
 function mkAct(verb, detail, bad) {
@@ -442,4 +475,50 @@ function onFinished(e) {
   $('closing').append(box);
 }
 
+/* ------------------------------------------------------------ repo form */
+
+function hint(text, said) {
+  const h = $('repo-hint');
+  h.textContent = text || '';
+  h.classList.toggle('said', !!said);
+}
+
+async function repoLimits() {
+  try {
+    const r = await fetch('/api/tasks');
+    if (!r.ok) return;
+    const d = await r.json();
+    const hosts = (d.repo_hosts || []).join(' or ');
+    hint(`Public repositories on ${hosts}, up to ${d.repo_max_mb} MB and ` +
+         `${d.repo_max_files} files, one commit deep. Add @branch, @tag or @commit to pick a ref.`);
+  } catch { /* the field still works without the numbers */ }
+}
+
+$('repo').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const url = $('repo-url').value.trim();
+  if (!url) { hint('Paste a repository address to review, such as https://github.com/org/repo.', true); return; }
+  if (!/^(https?:\/\/|git@|ssh:\/\/)/i.test(url)) {
+    hint('That reads as a path. This field takes a URL, in the form https://github.com/org/repo.', true);
+    return;
+  }
+  $('repo-go').disabled = true;
+  hint('Asking the arena for a slot.');
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_url: url, task: 'full' }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { hint(d.error || 'The arena declined that one. Try again in a moment.', true); return; }
+    hint('');
+    attach(d.run_id);
+  } catch {
+    hint('The server is out of reach just now. Try again in a moment.', true);
+  } finally {
+    $('repo-go').disabled = false;
+  }
+});
+
 boot();
+repoLimits();
