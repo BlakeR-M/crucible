@@ -95,9 +95,14 @@ else can do.
    finish, download the ledger from the interface, and on any machine with
    the repository run:
    ```
-   python -m crucible.cli verify <downloaded ledger> --workspace demo_target
+   python -m crucible.cli verify <downloaded ledger>
    ```
-   Chain intact and every decision reproduced is the pass.
+   `chain intact` and `every decision in it reproduces` is the pass. This is
+   the self-reported mode: it checks the chain and replays the decisions
+   against the policy the file recorded. The independent `--workspace` mode
+   only replays when the directory you name is the one the run recorded,
+   which for a ledger made in the container (`/app/demo_target`) will not be
+   your checkout; `verify` says so and still checks the chain.
 
 ## Redeploying
 

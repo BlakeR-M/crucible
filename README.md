@@ -142,10 +142,11 @@ payload, deleting an entry, inserting one, or swapping two all produce a break,
 and `verify()` names the first sequence number where the chain stops adding up.
 
 You do not have to take the server's word for this. The interface offers the
-ledger for download, and `crucible verify <ledger> --workspace <dir>`
-recomputes the whole chain and replays every policy decision on your machine,
-without trusting anything the server says. The claim is checkable by the
-person who doubts it.
+ledger for download, and `crucible verify <ledger>` recomputes the whole chain
+and replays every policy decision on your machine, without trusting anything
+the server says. Add `--workspace <dir>` when the reviewed directory is at
+hand and the replay is rebuilt from it rather than from the policy the file
+recorded. The claim is checkable by the person who doubts it.
 
 It is tamper-**evident**, not tamper-proof. Making it the latter needs a
 signature and a key kept somewhere else, which is a real design and not one
