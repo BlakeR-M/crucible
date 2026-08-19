@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from collections import Counter
 from pathlib import Path
@@ -39,8 +40,8 @@ from assay.problems import CLASSES, rng_for
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "assay" / "results"
 
-LOCAL_URL = "http://127.0.0.1:8080/v1"
-LOCAL_MODEL = "D:\\models\\Qwen2.5-Coder-7B-Instruct-Q6_K.gguf"
+LOCAL_URL = os.environ.get("CRUCIBLE_LOCAL_URL", "http://127.0.0.1:8080/v1")
+LOCAL_MODEL = os.environ.get("CRUCIBLE_LOCAL_MODEL", "local")
 
 SYSTEM = """\
 You solve small scheduling and arrangement problems stated in plain English.
@@ -152,19 +153,38 @@ def report(summary: dict) -> None:
               "reasoning rather than the model misreading the task.")
 
 
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def _key(name: str) -> str:
+    """The named key from the environment, or from an env file.
+
+    The file is CRUCIBLE_ENV_FILE when set, otherwise .env at the repo root.
+    Never printed, never written into a result file. The screener records the
+    model name and the spend and nothing else about how it reached the model.
+    """
+    value = os.environ.get(name, "")
+    if value:
+        return value
+    path = Path(os.environ.get("CRUCIBLE_ENV_FILE") or ROOT / ".env")
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith(f"{name}="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
 def build_provider(kind: str, model: str):
     if kind == "local":
         return OpenAIProvider("", {t: LOCAL_MODEL for t in Tier},
                               base_url=LOCAL_URL, metered=False)
-    import os
-
-    key = os.environ.get("OPENAI_API_KEY", "")
-    if not key:
-        env = ROOT / ".env"
-        if env.exists():
-            for line in env.read_text(encoding="utf-8").splitlines():
-                if line.startswith("OPENAI_API_KEY="):
-                    key = line.split("=", 1)[1].strip().strip('"').strip("'")
+    if kind == "gemini":
+        key = _key("GEMINI_API_KEY")
+        if not key:
+            raise SystemExit("no GEMINI_API_KEY in the environment or .env")
+        return OpenAIProvider(key, {t: model for t in Tier},
+                              base_url=GEMINI_URL)
+    key = _key("OPENAI_API_KEY")
     if not key:
         raise SystemExit("no OPENAI_API_KEY in the environment or .env")
     return OpenAIProvider(key, {t: model for t in Tier})
@@ -172,7 +192,8 @@ def build_provider(kind: str, model: str):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=["local", "openai"], default="local")
+    parser.add_argument("--provider", choices=["local", "openai", "gemini"],
+                        default="local")
     parser.add_argument("--model", default="gpt-5")
     parser.add_argument("--n", type=int, default=30)
     parser.add_argument("--difficulty", default="medium",
@@ -188,7 +209,7 @@ def main() -> int:
     budget = Budget(ceiling_usd=args.ceiling,
                     unmetered=(args.provider == "local"))
 
-    name = args.model if args.provider == "openai" else "local"
+    name = "local" if args.provider == "local" else args.model
     print(f"screening {name} on {', '.join(args.classes)}, "
           f"n={args.n} each, ceiling ${args.ceiling:.2f}")
 

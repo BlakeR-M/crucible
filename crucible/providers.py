@@ -55,7 +55,7 @@ DEFAULT_MODELS: dict[Tier, str] = {
 # all 400 reasoning and returns an empty string, which reads exactly like a
 # refusal and is not one. Found by smoke test rather than by reading the docs,
 # which is why the smoke test exists.
-REASONING_MODELS = ("gpt-5", "o3", "o4")
+REASONING_MODELS = ("gpt-5", "o3", "o4", "gemini")
 
 # Headroom added on top of the caller's request for those models, so the answer
 # has somewhere to go once the reasoning is paid for.
@@ -269,7 +269,11 @@ class OpenAIProvider:
             ],
             self._token_field: allowance,
         }
-        if thinks and self.metered:
+        # reasoning_effort is an OpenAI parameter. Other hosts that also
+        # reason are given the headroom above but not the flag, because a
+        # compatibility layer that has never heard of the field rejects the
+        # whole request rather than ignoring it.
+        if thinks and "api.openai.com" in self.base_url:
             # Kept low on purpose. These seats want judgement rather than long
             # deliberation, and the reasoning is the expensive part.
             body["reasoning_effort"] = reasoning
