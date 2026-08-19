@@ -359,9 +359,16 @@ def _as_int(value, default: int = 0) -> int:
 
 class Orchestrator:
     def __init__(self, provider, workspace: Path, policy: Policy, ledger: Ledger,
-                 budget: Budget, emit=None, *, max_workers: int = 6):
+                 budget: Budget, emit=None, *, max_workers: int = 6,
+                 source: dict | None = None):
         self.provider = provider
         self.workspace = Path(workspace).resolve()
+        # Where the workspace came from, when it came from somewhere: the
+        # repository URL, the ref asked for and the commit checked out. Written
+        # into the run's first entry beside the policy, so a record names the
+        # exact code it describes. Empty for a local directory, and the header
+        # is the same shape either way.
+        self.source = dict(source or {})
         self.policy = policy
         self.ledger = ledger
         self.budget = budget
@@ -1004,11 +1011,11 @@ class Orchestrator:
         self.ledger.append(
             "run_started", run_id=run_id, task=task,
             workspace=str(self.workspace), policy=self.policy.as_dict(),
-            budget_ceiling_usd=self.budget.ceiling_usd,
+            budget_ceiling_usd=self.budget.ceiling_usd, **self.source,
         )
         self.emit("run_started", run_id=run_id, task=task,
                   policy=self.policy.as_dict(),
-                  ceiling=self.budget.ceiling_usd)
+                  ceiling=self.budget.ceiling_usd, **self.source)
 
         # The boundary probe runs beside the review rather than between its
         # phases. Started here, its refusals are on screen while the planner is

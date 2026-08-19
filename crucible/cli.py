@@ -7,6 +7,7 @@ that someone can verify later without trusting the process that wrote it.
 
     crucible init                     write a starter crucible.toml
     crucible run .                    review a codebase
+    crucible run https://github.com/org/repo@main   review a public repository
     crucible models                   show the configured seats and reach them
     crucible verify runs/abc123.jsonl check a run's record independently
 
@@ -26,10 +27,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
 
+from . import repo
 from .archive import score_against_key
 from .config import CONFIG_NAME, STARTER, Config, ConfigError, find_config, load
 from .ledger import Ledger
@@ -43,6 +46,12 @@ ROOT = Path(__file__).resolve().parent.parent
 EXIT_CLEAN = 0
 EXIT_SURVIVED = 1
 EXIT_FAILED = 2
+
+# Caps for `crucible run <url>`. Wider than the server's, since this is
+# someone's own key and own machine, and still bounded, since a URL is a
+# stranger's tree until it has been measured.
+REPO_MAX_BYTES_CLI = 200_000_000
+REPO_MAX_FILES_CLI = 20_000
 
 
 # --------------------------------------------------------------------- output
@@ -110,8 +119,11 @@ def _credibility(report) -> str:
     return ""
 
 
-def _print_report(report, config: Config, ledger_path: Path) -> None:
+def _print_report(report, config: Config, ledger_path: Path,
+                  fetched: repo.CloneResult | None = None) -> None:
     _rule()
+    if fetched:
+        print(f"  source: {fetched.url} @ {fetched.commit_sha}")
     print(f"  {report.survived} of {report.raised} findings survived "
           f"adversarial verification")
     if report.agent_failures:
@@ -237,8 +249,54 @@ def cmd_models(args) -> int:
     return EXIT_CLEAN
 
 
+def _fetch_repo(args) -> repo.CloneResult:
+    """A URL on the command line becomes a temporary workspace.
+
+    The whole guardrail set the server applies, with two exceptions the person
+    at the keyboard has earned: any host, and the caps raised, since a
+    developer pointing the tool at their own large repository is spending
+    their own time and their own key.
+    """
+    url, inline_ref = repo.parse_repo_ref(args.path)
+    if inline_ref and args.ref and inline_ref != args.ref:
+        raise ConfigError("the URL names one ref and --ref another; pick one")
+    dest = repo.workspace_dir()
+    if not args.quiet:
+        print(f"  cloning   {url}" + (f" @ {args.ref or inline_ref}"
+                                      if (args.ref or inline_ref) else ""))
+    started = time.time()
+    result = repo.clone(url, args.ref or inline_ref, dest / "checkout",
+                        timeout_s=args.clone_timeout,
+                        max_bytes=REPO_MAX_BYTES_CLI, max_files=REPO_MAX_FILES_CLI)
+    if not args.quiet:
+        print(f"  cloned    {result.files} files, {result.bytes / 1_000_000:.2f} MB, "
+              f"{time.time() - started:.1f}s")
+    return result
+
+
 def cmd_run(args) -> int:
-    workspace = Path(args.path).resolve()
+    fetched: repo.CloneResult | None = None
+    if repo.is_git_url(args.path):
+        # The config comes from the current directory (or --config) rather
+        # than from inside a stranger's repository. A crucible.toml in the
+        # clone naming a different endpoint would otherwise steer the run.
+        args.path = "."
+        try:
+            fetched = _fetch_repo(args)
+        except repo.RepoError as exc:
+            print(f"repository: {exc}", file=sys.stderr)
+            return EXIT_FAILED
+        try:
+            return _run_in(fetched.path, args, fetched)
+        finally:
+            if args.keep:
+                print(f"\n  workspace kept at {fetched.path}")
+            else:
+                repo.remove_tree(fetched.path.parent)
+    return _run_in(Path(args.path).resolve(), args, None)
+
+
+def _run_in(workspace: Path, args, fetched: repo.CloneResult | None) -> int:
     if not workspace.is_dir():
         print(f"no such directory: {workspace}", file=sys.stderr)
         return EXIT_FAILED
@@ -266,6 +324,8 @@ def cmd_run(args) -> int:
 
     if not args.quiet:
         print(f"  workspace {workspace}")
+        if fetched:
+            print(f"  source    {fetched.url} @ {fetched.commit_sha}")
         print(f"  config    {config.source}")
         print(f"  provider  {config.describe()}")
         print(f"  ceiling   ${config.ceiling_usd:.2f}")
@@ -275,6 +335,7 @@ def cmd_run(args) -> int:
     orchestrator = Orchestrator(
         provider, workspace, review_policy(workspace), Ledger(ledger_path),
         budget, emit=_reporter(args.quiet), max_workers=config.max_workers,
+        source=fetched.as_header() if fetched else None,
     )
     report = orchestrator.run(config.task)
 
@@ -284,9 +345,12 @@ def cmd_run(args) -> int:
     ledger_path.replace(final)
 
     if args.json:
-        print(json.dumps(asdict(report), indent=2))
+        payload = asdict(report)
+        if fetched:
+            payload["source"] = fetched.as_header()
+        print(json.dumps(payload, indent=2))
     else:
-        _print_report(report, config, final)
+        _print_report(report, config, final, fetched)
         if args.score:
             _print_score(report, workspace)
 
@@ -389,6 +453,13 @@ def cmd_verify(args) -> int:
         trust = ("SELF-REPORTED by the file, so this replay shows the record "
                  "is internally consistent rather than that the rules were "
                  "real. Pass --workspace to check it independently.")
+    header = started["payload"]
+    if header.get("repo_url"):
+        # Older ledgers carry no source at all, and that is a local run rather
+        # than a fault, so this line appears only when there is one to show.
+        ref = f" ({header['repo_ref']})" if header.get("repo_ref") else ""
+        print(f"  source    {header['repo_url']}{ref} @ "
+              f"{header.get('commit_sha') or 'commit not recorded'}")
     print(f"  policy    '{policy.name}' with "
           f"{len(policy.rules)} permitted tool(s)")
     print(f"  source    {trust}")
@@ -508,8 +579,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run = subparsers.add_parser("run", help="review a codebase")
-    run.add_argument("path", nargs="?", default=".")
+    run = subparsers.add_parser("run", help="review a codebase, by path or by URL")
+    run.add_argument("path", nargs="?", default=".",
+                     help="a directory, or a public repository URL such as "
+                          "https://github.com/org/repo[@ref]")
+    run.add_argument("--ref", help="branch, tag or commit to review, when the "
+                                   "target is a URL (or write it as @ref)")
+    run.add_argument("--keep", action="store_true",
+                     help="keep the cloned workspace and print its path")
+    run.add_argument("--clone-timeout", type=float, default=120,
+                     dest="clone_timeout", help="seconds to allow the clone")
     run.add_argument("--config", help=f"path to {CONFIG_NAME}")
     run.add_argument("--task", help="override the review task")
     run.add_argument("--ceiling", type=float, help="spend ceiling in USD")
@@ -550,6 +629,9 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(args)
     except ConfigError as exc:
         print(f"configuration: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+    except repo.RepoError as exc:
+        print(f"repository: {exc}", file=sys.stderr)
         return EXIT_FAILED
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
