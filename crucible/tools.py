@@ -32,6 +32,46 @@ from .policy import Policy
 MAX_CHARS = 24_000
 MAX_MATCHES = 60
 
+# What a child process started by a tool is allowed to see of this process's
+# environment. An allowlist rather than a denylist: the key that pays for the
+# run, the server's own settings and anything shaped like a secret stay on
+# this side of the boundary, and a test file that reads os.environ finds only
+# what it needs to start an interpreter.
+SUBPROCESS_ENV_KEEP = frozenset({
+    "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP",
+    "USER", "USERNAME", "SHELL",
+    # Windows needs these for any process to start and find its libraries.
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT",
+    "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES",
+    "PROGRAMFILES(X86)", "COMMONPROGRAMFILES", "HOMEDRIVE", "HOMEPATH",
+    "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+    # So the child interpreter reads and writes the same encoding as ours.
+    "PYTHONIOENCODING", "PYTHONUTF8", "VIRTUAL_ENV",
+})
+SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASS", "_PASSWORD")
+
+
+def subprocess_env(parent: dict | None = None) -> dict:
+    """The environment a tool's child process runs under.
+
+    Kept: the allowlist above. Dropped regardless of the allowlist, so a
+    future addition cannot let one through by accident: OPENAI_API_KEY, every
+    CRUCIBLE_* variable, and anything ending in a secret-shaped suffix.
+    """
+    import os
+
+    source = os.environ if parent is None else parent
+    kept = {}
+    for name, value in source.items():
+        upper = name.upper()
+        if upper == "OPENAI_API_KEY" or upper.startswith("CRUCIBLE_"):
+            continue
+        if upper.endswith(SECRET_SUFFIXES):
+            continue
+        if upper in SUBPROCESS_ENV_KEEP:
+            kept[name] = value
+    return kept
+
 # How much of an argument the ledger keeps. Payloads are cut short so the record
 # stays publishable; the arguments a policy decision is made on are kept whole,
 # because a call recorded as its own length can never be re-decided by anyone
@@ -326,6 +366,7 @@ class Toolbox:
             proc = subprocess.run(
                 parts, cwd=cwd, capture_output=True, text=True,
                 timeout=TEST_TIMEOUT_SECONDS, shell=False,
+                env=subprocess_env(), stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired:
             return f"TIMEOUT after {TEST_TIMEOUT_SECONDS}s: {' '.join(parts)}"

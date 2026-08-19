@@ -333,7 +333,7 @@ class Policy:
         }
 
 
-def review_policy(workspace: Path) -> Policy:
+def review_policy(workspace: Path, *, run_tests: bool = True) -> Policy:
     """The authority a defect-hunting agent gets.
 
     It reads the checkout and writes only inside a scratch directory, so a
@@ -341,23 +341,36 @@ def review_policy(workspace: Path) -> Policy:
     reproduction that was never executed is an opinion. Nothing reaches the
     network, which is what makes an exfiltration attempt fail on the boundary
     rather than on the model's good judgement.
+
+    `run_tests=False` withholds the one tool that executes the checkout's own
+    code. That is the policy a repository fetched by URL gets by default: a
+    stranger's test files run beside this process's environment is a wider
+    grant than reading their tree, and it is made deliberately or not at all.
     """
     workspace = workspace.resolve()
+    rules = {
+        "read_file": ToolRule(path_scopes=[workspace]),
+        "list_dir": ToolRule(path_scopes=[workspace]),
+        "search": ToolRule(path_scopes=[workspace]),
+        "write_scratch": ToolRule(
+            path_scopes=[workspace / ".crucible-scratch"], max_bytes=200_000
+        ),
+    }
+    if run_tests:
+        rules["run_tests"] = ToolRule(
+            path_scopes=[workspace], commands=["python", "pytest", "node", "npm"]
+        )
+        return Policy(
+            "review", rules,
+            description=(
+                "Read the checkout, run its tests, write only to scratch. "
+                "No network, no edits to the code under review."
+            ),
+        )
     return Policy(
-        "review",
-        {
-            "read_file": ToolRule(path_scopes=[workspace]),
-            "list_dir": ToolRule(path_scopes=[workspace]),
-            "search": ToolRule(path_scopes=[workspace]),
-            "write_scratch": ToolRule(
-                path_scopes=[workspace / ".crucible-scratch"], max_bytes=200_000
-            ),
-            "run_tests": ToolRule(
-                path_scopes=[workspace], commands=["python", "pytest", "node", "npm"]
-            ),
-        },
+        "review-read-only", rules,
         description=(
-            "Read the checkout, run its tests, write only to scratch. "
-            "No network, no edits to the code under review."
+            "Read the checkout, write only to scratch. The checkout's own "
+            "tests do not run. No network, no edits to the code under review."
         ),
     )

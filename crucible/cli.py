@@ -332,10 +332,17 @@ def _run_in(workspace: Path, args, fetched: repo.CloneResult | None) -> int:
 
     budget = Budget(ceiling_usd=config.ceiling_usd,
                     unmetered=not config.metered)
+    # A local directory is the operator's own code and its tests run. A URL
+    # is somebody else's, and its tests run only when the operator has said
+    # so in the environment; the record says which.
+    tests_enabled = fetched is None or repo.url_tests_enabled()
+    if fetched and not args.quiet:
+        print(f"  tests     {'enabled by ' + repo.URL_RUN_TESTS_ENV if tests_enabled else 'off for a URL (set ' + repo.URL_RUN_TESTS_ENV + '=1 to run them)'}")
     orchestrator = Orchestrator(
-        provider, workspace, review_policy(workspace), Ledger(ledger_path),
+        provider, workspace, review_policy(workspace, run_tests=tests_enabled),
+        Ledger(ledger_path),
         budget, emit=_reporter(args.quiet), max_workers=config.max_workers,
-        source=fetched.as_header() if fetched else None,
+        source=fetched.as_header(tests_enabled=tests_enabled) if fetched else None,
     )
     report = orchestrator.run(config.task)
 
@@ -446,7 +453,11 @@ def cmd_verify(args) -> int:
                   f"directory scopes different paths, so the replay would "
                   f"compare decisions nobody made.", file=sys.stderr)
             return EXIT_FAILED
-        policy = review_policy(workspace)
+        # A URL run recorded whether its tests were allowed to run. The
+        # rebuilt policy honours that one bit, since a rebuild that grants a
+        # tool the run never had would call every refusal of it a mismatch.
+        tests = started["payload"].get("tests_enabled")
+        policy = review_policy(workspace, run_tests=tests is not False)
         trust = "independent, rebuilt from the workspace you named"
     else:
         policy = Policy.from_dict(started["payload"].get("policy") or {})
@@ -460,6 +471,9 @@ def cmd_verify(args) -> int:
         ref = f" ({header['repo_ref']})" if header.get("repo_ref") else ""
         print(f"  reviewed  {header['repo_url']}{ref} @ "
               f"{header.get('commit_sha') or 'commit not recorded'}")
+        if "tests_enabled" in header:
+            print(f"  tests     {'ran' if header['tests_enabled'] else 'did not run'} "
+                  f"for this URL")
     print(f"  policy    '{policy.name}' with "
           f"{len(policy.rules)} permitted tool(s)")
     print(f"  source    {trust}")

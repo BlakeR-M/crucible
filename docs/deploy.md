@@ -24,6 +24,7 @@ is grey-clouded, how the stream survives) is in
 | `CRUCIBLE_REPO_HOSTS` | no | Comma-separated hosts a visitor may name in the repository field, default `github.com,gitlab.com`. |
 | `CRUCIBLE_REPO_MAX_MB` | no | Size cap on a cloned repository, default `50`. |
 | `CRUCIBLE_REPO_MAX_FILES` | no | File cap on a cloned repository, default `5000`. |
+| `CRUCIBLE_URL_RUN_TESTS` | no | Unset, a repository fetched by URL is reviewed read-only: its own tests never execute on the container. `1` turns `run_tests` on for URL runs; the ledger records `tests_enabled` either way. Tool child processes always get a scrubbed environment without `OPENAI_API_KEY` or any `CRUCIBLE_*` value. |
 | `CRUCIBLE_REPO_CLONE_TIMEOUT_S` | no | Seconds a clone may run, default `120`. Railway's 15 minute request limit is nowhere near this; the cap is there so a slow host cannot hold a run slot. |
 | `PYTHONUNBUFFERED` | recommended | `1`, so logs stream. `-u` on the start command already covers this; setting both is harmless. |
 

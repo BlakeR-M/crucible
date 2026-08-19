@@ -292,6 +292,15 @@ current directory, never from inside the clone. The CLI takes any host and
 caps the checkout at 200 MB and 20,000 files; a URL that cannot be parsed, or
 a repository past the caps, exits 2 with the numbers.
 
+A URL run does not execute the repository's own tests. It runs under a
+`review-read-only` policy with `run_tests` withheld, because a stranger's
+test files running inside your process is a wider grant than reading their
+tree. Set `CRUCIBLE_URL_RUN_TESTS=1` to turn it back on when you accept that,
+and the run's first ledger entry records `tests_enabled` either way. Separately,
+and for every run, a child process started by a tool gets a scrubbed
+environment: what an interpreter needs to start, and never `OPENAI_API_KEY`,
+`CRUCIBLE_*`, or anything ending in `_KEY`, `_TOKEN`, `_SECRET` or `_PASS`.
+
 Exit codes, because the point of a gate is that something downstream reads it:
 
 | code | meaning |
@@ -374,6 +383,7 @@ thing, orchestrator and policy and ledger included, without spending anything.
 | `CRUCIBLE_REPO_MAX_MB` | `50` | Size cap on a cloned repository, `.git` excluded |
 | `CRUCIBLE_REPO_MAX_FILES` | `5000` | File cap on a cloned repository |
 | `CRUCIBLE_REPO_CLONE_TIMEOUT_S` | `120` | Seconds a clone may take before it is stopped |
+| `CRUCIBLE_URL_RUN_TESTS` | unset | `1` lets a URL run execute the repository's own tests; off, the run uses the `review-read-only` policy |
 
 The interface takes a public repository URL as well as the demo target:
 `POST /api/run` with `{"repo_url": "...", "ref": "...", "task": "full"}`, or
@@ -383,7 +393,9 @@ submodules, lives in a private temporary directory for exactly the length of
 the run, and the review policy is scoped to it. The clone shows on the stream
 as `clone_started`, `clone_finished` (with the commit, file count and bytes)
 and `clone_failed`, and `GET /api/tasks` lists each run with its source. A URL
-run counts against the run and daily ceilings like any other.
+run counts against the run and daily ceilings like any other, runs its
+tests only when `CRUCIBLE_URL_RUN_TESTS=1`, and any tool child process on the
+server sees a scrubbed environment without the key.
 
 Deployment to Railway behind a Cloudflare subdomain is the runbook in
 [`docs/deploy.md`](docs/deploy.md); the research behind it, including the two
@@ -414,10 +426,10 @@ python tests/test_chat.py          # 134
 python tests/test_archive.py       # 102
 python tests/test_cli.py           # 125
 python tests/test_assay.py         # 20
-python tests/test_repo.py          # 81
+python tests/test_repo.py          # 97
 ```
 
-**653 checks, no network, no spend.** The check files are plain scripts;
+**669 checks, no network, no spend.** The check files are plain scripts;
 `tests/test_suite.py` runs each one under pytest so a pipeline needs one
 command. The orchestrator suite replaces the model
 with a stand-in that answers from the prompt it is given, because a queue of

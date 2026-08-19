@@ -422,12 +422,15 @@ def start_run(task_key: str, repo_url: str | None = None,
                 # The record names what the visitor asked for, canonicalised
                 # at admission, and the commit the clone actually stood at.
                 workspace = fetched.path
-                header = {**source, "commit_sha": fetched.commit_sha}
+                tests_enabled = repo.url_tests_enabled()
+                header = {**source, "commit_sha": fetched.commit_sha,
+                          "tests_enabled": tests_enabled}
             else:
-                workspace, header = TARGET, {}
+                workspace, header, tests_enabled = TARGET, {}, True
             provider = pick_provider()
             orchestrator = Orchestrator(
-                provider, workspace, review_policy(workspace), ledger, budget,
+                provider, workspace,
+                review_policy(workspace, run_tests=tests_enabled), ledger, budget,
                 emit=lambda event: REGISTRY.publish(run_id, event),
                 source=header,
             )

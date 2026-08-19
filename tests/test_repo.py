@@ -156,8 +156,10 @@ def clone_checks(tmp: Path) -> None:
     check("history is out of reach: the checkout is not a git work tree",
           top.returncode != 0 or Path(top.stdout.strip()).resolve() != (tmp / "ws").resolve())
     header = result.as_header()
-    check("the header carries the three fields",
-          set(header) == {"repo_url", "repo_ref", "commit_sha"} and header["commit_sha"] == sha)
+    check("the header carries the source fields and tests_enabled, off by default",
+          set(header) == {"repo_url", "repo_ref", "commit_sha", "tests_enabled"}
+          and header["commit_sha"] == sha and header["tests_enabled"] is False)
+    check("tests_enabled can be recorded on", result.as_header(tests_enabled=True)["tests_enabled"] is True)
 
     section("clone: refs")
     by_branch = repo.clone(str(bare), "main", tmp / "ws-branch", allow_local=True)
@@ -210,6 +212,58 @@ def clone_checks(tmp: Path) -> None:
     check("a read-only tree is removed", not ro.exists())
     repo.remove_tree(ro)
     check("removing it again is fine", True)
+
+
+# ---------------------------------------------------------- policy + env
+
+def policy_and_env_checks(tmp: Path) -> None:
+    from crucible.ledger import Ledger as _Ledger
+    from crucible.policy import review_policy
+    from crucible.tools import Toolbox, subprocess_env
+
+    section("policy: a URL run withholds run_tests unless the operator says so")
+    work = tmp / "work"
+    work.mkdir(parents=True)
+    full = review_policy(work)
+    ro = review_policy(work, run_tests=False)
+    check("the default policy still has run_tests", "run_tests" in full.rules)
+    check("the read-only variant does not", "run_tests" not in ro.rules)
+    check("and says so in its name", ro.name == "review-read-only")
+    check("every other tool is unchanged", set(ro.rules) == set(full.rules) - {"run_tests"})
+    decision = ro.check("run_tests", {"path": str(work), "command": "pytest"})
+    check("run_tests is refused under it", not decision.allowed)
+    os.environ.pop(repo.URL_RUN_TESTS_ENV, None)
+    check("URL tests are off by default", repo.url_tests_enabled() is False)
+    os.environ[repo.URL_RUN_TESTS_ENV] = "1"
+    check("and on with the variable", repo.url_tests_enabled() is True)
+    os.environ.pop(repo.URL_RUN_TESTS_ENV, None)
+
+    section("subprocess env: a tool's child sees no key, no CRUCIBLE_*, nothing secret-shaped")
+    sample = {"PATH": "p", "HOME": "h", "LANG": "C", "SYSTEMROOT": "C:\Windows", "TEMP": "t",
+              "OPENAI_API_KEY": "sk-x", "CRUCIBLE_USER": "u", "CRUCIBLE_PASS": "p",
+              "MY_TOKEN": "t", "AWS_SECRET": "s", "DB_PASSWORD": "p", "GITHUB_KEY": "k",
+              "SOMETHING_ELSE": "x", "openai_api_key": "lower"}
+    env = subprocess_env(sample)
+    check("the allowlist survives", {"PATH", "HOME", "LANG", "SYSTEMROOT", "TEMP"} <= set(env))
+    check("nothing else does",
+          not ({"OPENAI_API_KEY", "openai_api_key", "CRUCIBLE_USER", "CRUCIBLE_PASS", "MY_TOKEN",
+                "AWS_SECRET", "DB_PASSWORD", "GITHUB_KEY", "SOMETHING_ELSE"} & set(env)), str(env))
+
+    # The real thing: a run_tests child, with the key set in this process.
+    os.environ["OPENAI_API_KEY"] = "sk-test-must-not-leak"
+    os.environ["CRUCIBLE_SECRET"] = "also-not"
+    (work / "probe_env.py").write_text(
+        "import os, json; print(json.dumps(sorted(os.environ)))" + chr(10), encoding="utf-8")
+    box = Toolbox(work, review_policy(work), _Ledger(tmp / "env.jsonl"))
+    result = box.invoke("run_tests", {"path": str(work),
+                                      "command": f'python "{work / "probe_env.py"}"'})
+    out = result.content
+    check("the child ran", "exit=0" in out, out[:200])
+    check("and cannot see OPENAI_API_KEY", "OPENAI_API_KEY" not in out)
+    check("nor CRUCIBLE_SECRET", "CRUCIBLE_SECRET" not in out)
+    check("but does see PATH", '"PATH"' in out or '"Path"' in out, out[:300])
+    del os.environ["OPENAI_API_KEY"]
+    del os.environ["CRUCIBLE_SECRET"]
 
 
 # ------------------------------------------------------------------ server
@@ -278,6 +332,10 @@ def server_checks(tmp: Path) -> None:
         check("run_started names the source",
               started is not None and started.get("repo_url") == "https://github.com/octocat/example"
               and started.get("commit_sha") == sha)
+        check("run_started records tests_enabled false for a URL run",
+              started is not None and started.get("tests_enabled") is False)
+        check("and the policy it ran under has no run_tests",
+              started is not None and "run_tests" not in started["policy"]["tools"])
         # The workspace the policy was scoped to is the clone, and it is gone.
         scope = started["policy"]["tools"]["read_file"]["path_scopes"][0] if started else ""
         check("the policy was scoped to the temporary checkout",
@@ -288,10 +346,11 @@ def server_checks(tmp: Path) -> None:
                   for r in server.REGISTRY.listing()))
         ledger = Ledger(server.RUNS / f"{run_id}.jsonl")
         first = ledger.entries()[0]
-        check("the ledger's first entry carries repo_url, repo_ref and commit_sha",
+        check("the ledger's first entry carries repo_url, repo_ref, commit_sha and tests_enabled",
               first["event"] == "run_started" and first["payload"].get("repo_url")
               == "https://github.com/octocat/example" and first["payload"].get("repo_ref") == "main"
-              and first["payload"].get("commit_sha") == sha)
+              and first["payload"].get("commit_sha") == sha
+              and first["payload"].get("tests_enabled") is False)
         check("and the chain verifies", ledger.verify() is None)
 
         section("server: a clone that fails ends the run cleanly")
@@ -333,6 +392,7 @@ def main() -> None:
         tmp = Path(raw)
         parse_checks()
         clone_checks(tmp / "clone")
+        policy_and_env_checks(tmp / "pol")
         server_checks(tmp)
         cli_checks(tmp)
     print(f"\n{PASSED} checks passed, {len(FAILED)} failed")

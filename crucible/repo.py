@@ -28,6 +28,16 @@ from urllib.parse import urlsplit
 
 DEFAULT_HOSTS = ("github.com", "gitlab.com")
 
+# Whether a repository fetched by URL may have its own tests executed. Off
+# unless the operator says so: a stranger's test files running beside this
+# process is a decision, and CRUCIBLE_URL_RUN_TESTS=1 is how it is made.
+URL_RUN_TESTS_ENV = "CRUCIBLE_URL_RUN_TESTS"
+
+
+def url_tests_enabled() -> bool:
+    return os.environ.get(URL_RUN_TESTS_ENV, "").strip().lower() in (
+        "1", "true", "yes", "on")
+
 # A branch, a tag, or a full commit. Underscores, dots, slashes and dashes are
 # fine; anything git could read as an option (a leading dash) is refused before
 # it reaches the command line.
@@ -82,10 +92,10 @@ class CloneResult:
     files: int
     bytes: int
 
-    def as_header(self) -> dict:
-        """The three fields the run record carries."""
+    def as_header(self, *, tests_enabled: bool = False) -> dict:
+        """The fields the run record carries for a fetched workspace."""
         return {"repo_url": self.url, "repo_ref": self.ref,
-                "commit_sha": self.commit_sha}
+                "commit_sha": self.commit_sha, "tests_enabled": tests_enabled}
 
 
 # --------------------------------------------------------------- parsing

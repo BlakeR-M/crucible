@@ -93,24 +93,23 @@ bucket resets on read. A run spanning midnight can have its spend dropped.
 
 ---
 
-### A repository named by URL runs its own tests on the host
-
-`crucible run <url>` and the interface's repository field clone a public
-repository and review it under `review_policy`, which permits `run_tests`
-with `python`, `pytest`, `node` and `npm`. Those commands execute whatever the
-cloned repository puts in its test files, inside the process's own box, with
-the process's environment. On a developer's machine that is the same trust
-they extend by running any checkout's tests. On the hosted demo it means a
-visitor with the sign-in can point the arena at a repository they control and
-have its `conftest.py` run beside `OPENAI_API_KEY`. The clone itself is
-bounded (allowlisted hosts, depth 1, no submodules, size and file caps, a
-timeout, workspace removed after the run) and the ledger records exactly what
-was fetched, but the policy's "no network" applies to the agents' tools, not
-to a subprocess the tests spawn. The straightforward fix is a policy for URL
-runs on the server that omits `run_tests`, at the cost of reproductions that
-were never executed. Left as decided by whoever deploys it, and named here.
-
 ## Fixed, for the record
+
+### A repository named by URL could run its own tests beside the key
+
+`crucible run <url>` and the interface's repository field reviewed a clone
+under the same policy as a local directory, which permits `run_tests`, so a
+visitor could point the arena at a repository they control and have its test
+files execute inside the process, with `OPENAI_API_KEY` in the environment.
+Fixed in two layers that do not depend on each other. A URL run now gets a
+policy without `run_tests` (`review-read-only`) unless the operator sets
+`CRUCIBLE_URL_RUN_TESTS=1`, and the run's first ledger entry records
+`tests_enabled` either way. And every child a tool starts, wherever the
+workspace came from, gets a scrubbed environment: an allowlist of what an
+interpreter needs to start, with `OPENAI_API_KEY`, every `CRUCIBLE_*` value
+and anything ending in `_KEY`, `_TOKEN`, `_SECRET`, `_PASS` or `_PASSWORD`
+never passed. `tests/test_repo.py` starts a `run_tests` child with the key set
+in the parent and asserts the child cannot see it.
 
 Full detail in the commit history.
 
