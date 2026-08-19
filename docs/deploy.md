@@ -21,11 +21,22 @@ is grey-clouded, how the stream survives) is in
 | `CRUCIBLE_DAILY_CEILING_USD` | no | Spend ceiling per UTC day, default `8.00`. |
 | `CRUCIBLE_CHAT_CEILING_USD` | no | Spend ceiling per visitor conversation, default `0.40`. |
 | `CRUCIBLE_OFFLINE` | no | `1` runs the whole thing with the stand-in model and spends nothing. Useful for a first deploy to check the plumbing before the key goes in. |
+| `CRUCIBLE_REPO_HOSTS` | no | Comma-separated hosts a visitor may name in the repository field, default `github.com,gitlab.com`. |
+| `CRUCIBLE_REPO_MAX_MB` | no | Size cap on a cloned repository, default `50`. |
+| `CRUCIBLE_REPO_MAX_FILES` | no | File cap on a cloned repository, default `5000`. |
+| `CRUCIBLE_REPO_CLONE_TIMEOUT_S` | no | Seconds a clone may run, default `120`. Railway's 15 minute request limit is nowhere near this; the cap is there so a slow host cannot hold a run slot. |
 | `PYTHONUNBUFFERED` | recommended | `1`, so logs stream. `-u` on the start command already covers this; setting both is harmless. |
 
 Health check: `GET /healthz` returns 200 without a session. The `railway.json`
 in the repository already sets the start command, the health-check path with a
 60 second timeout, and restart on failure.
+
+`git` must be on the container's PATH for the repository field to work.
+Railpack's Python image carries it; a run against a URL on an image without
+it fails in a sentence ("git is not on the PATH") rather than hanging. Each
+URL run clones into a private directory under the container's temp space and
+removes it when the run ends, so disk use is bounded by the size cap times
+the concurrency cap.
 
 Runs write ledgers to `runs/` inside the container. That directory is
 ephemeral on Railway; the demo is fine with that, and the ledger download link

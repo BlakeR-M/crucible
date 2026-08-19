@@ -93,6 +93,23 @@ bucket resets on read. A run spanning midnight can have its spend dropped.
 
 ---
 
+### A repository named by URL runs its own tests on the host
+
+`crucible run <url>` and the interface's repository field clone a public
+repository and review it under `review_policy`, which permits `run_tests`
+with `python`, `pytest`, `node` and `npm`. Those commands execute whatever the
+cloned repository puts in its test files, inside the process's own box, with
+the process's environment. On a developer's machine that is the same trust
+they extend by running any checkout's tests. On the hosted demo it means a
+visitor with the sign-in can point the arena at a repository they control and
+have its `conftest.py` run beside `OPENAI_API_KEY`. The clone itself is
+bounded (allowlisted hosts, depth 1, no submodules, size and file caps, a
+timeout, workspace removed after the run) and the ledger records exactly what
+was fetched, but the policy's "no network" applies to the agents' tools, not
+to a subprocess the tests spawn. The straightforward fix is a policy for URL
+runs on the server that omits `run_tests`, at the cost of reproductions that
+were never executed. Left as decided by whoever deploys it, and named here.
+
 ## Fixed, for the record
 
 Full detail in the commit history.

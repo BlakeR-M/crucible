@@ -242,7 +242,7 @@ Python 3.11 or newer and nothing else. From a fresh clone:
 git clone https://github.com/BlakeR-M/crucible
 cd crucible
 python -m pip install pytest         # only for the one-command test run
-python -m pytest -q                  # 45 passed: every check file plus the demo target's suite
+python -m pytest -q                  # 46 passed: every check file plus the demo target's suite
 python -m crucible.cli --help        # the tool, straight from the checkout
 pip install .                        # or install it: gives you `crucible` and `crucible-server`
 ```
@@ -269,6 +269,28 @@ crucible models                   # show the seats and reach the endpoint
 crucible run .                    # review; blocks the pipeline if anything survives
 crucible verify runs/abc.jsonl --workspace .
 ```
+
+### A repository by URL
+
+```bash
+crucible run https://github.com/org/repo            # default branch
+crucible run https://github.com/org/repo@v1.4.2     # a tag, a branch, or a 40-hex commit
+crucible run git@github.com:org/repo.git --ref main # scp form is read as https
+crucible run https://github.com/org/repo --keep     # keep the checkout and print its path
+```
+
+The repository is cloned once, at depth 1, with no submodules and no tags,
+into a temporary workspace that is removed when the run ends. The commit it
+stood at is recorded (`git rev-parse HEAD`) and then the `.git` directory is
+stripped, so the agents read the tree at that commit and never its history.
+The report header prints `source: <url> @ <sha>`, the run record carries
+`repo_url`, `repo_ref` and `commit_sha` in its first entry, and `crucible
+verify` shows them. Public repositories only: no credential is ever passed,
+and git is told not to ask for one, so a private repository fails in a
+sentence rather than waiting on a prompt. The config still comes from your
+current directory, never from inside the clone. The CLI takes any host and
+caps the checkout at 200 MB and 20,000 files; a URL that cannot be parsed, or
+a repository past the caps, exits 2 with the numbers.
 
 Exit codes, because the point of a gate is that something downstream reads it:
 
@@ -348,6 +370,20 @@ thing, orchestrator and policy and ledger included, without spending anything.
 | `CRUCIBLE_RUN_CEILING_USD` | `0.60` | Spend ceiling for one run |
 | `CRUCIBLE_DAILY_CEILING_USD` | `8.00` | Spend ceiling per UTC day |
 | `CRUCIBLE_CHAT_CEILING_USD` | `0.40` | Spend ceiling for one visitor's conversation |
+| `CRUCIBLE_REPO_HOSTS` | `github.com,gitlab.com` | Hosts a visitor may name in the "Review a public repository" field |
+| `CRUCIBLE_REPO_MAX_MB` | `50` | Size cap on a cloned repository, `.git` excluded |
+| `CRUCIBLE_REPO_MAX_FILES` | `5000` | File cap on a cloned repository |
+| `CRUCIBLE_REPO_CLONE_TIMEOUT_S` | `120` | Seconds a clone may take before it is stopped |
+
+The interface takes a public repository URL as well as the demo target:
+`POST /api/run` with `{"repo_url": "...", "ref": "...", "task": "full"}`, or
+the field on the page. The same guardrails as the CLI apply, plus a host
+allowlist and the smaller caps above; the clone is depth 1 with no
+submodules, lives in a private temporary directory for exactly the length of
+the run, and the review policy is scoped to it. The clone shows on the stream
+as `clone_started`, `clone_finished` (with the commit, file count and bytes)
+and `clone_failed`, and `GET /api/tasks` lists each run with its source. A URL
+run counts against the run and daily ceilings like any other.
 
 Deployment to Railway behind a Cloudflare subdomain is the runbook in
 [`docs/deploy.md`](docs/deploy.md); the research behind it, including the two
@@ -378,9 +414,10 @@ python tests/test_chat.py          # 134
 python tests/test_archive.py       # 102
 python tests/test_cli.py           # 125
 python tests/test_assay.py         # 20
+python tests/test_repo.py          # 81
 ```
 
-**572 checks, no network, no spend.** The check files are plain scripts;
+**653 checks, no network, no spend.** The check files are plain scripts;
 `tests/test_suite.py` runs each one under pytest so a pipeline needs one
 command. The orchestrator suite replaces the model
 with a stand-in that answers from the prompt it is given, because a queue of
