@@ -242,7 +242,7 @@ Python 3.11 or newer and nothing else. From a fresh clone:
 git clone https://github.com/BlakeR-M/crucible
 cd crucible
 python -m pip install pytest         # only for the one-command test run
-python -m pytest -q                  # 46 passed: every check file plus the demo target's suite
+python -m pytest -q                  # 47 passed: every check file plus the demo target's suite
 python -m crucible.cli --help        # the tool, straight from the checkout
 pip install .                        # or install it: gives you `crucible` and `crucible-server`
 ```
@@ -259,7 +259,10 @@ CRUCIBLE_OFFLINE=1 CRUCIBLE_USER=demo CRUCIBLE_PASS=demo python main.py
 Every other path (`crucible run`, `crucible models`, the interface with real
 models, the bench) talks to a model, so it needs `OPENAI_API_KEY` in the
 environment or a local OpenAI-compatible server in `crucible.toml`.
-`crucible verify` needs neither.
+`crucible verify` needs neither. In the web interface a signed-in visitor can
+also attach their own OpenAI or Gemini key for the session (held in memory
+only, see the table below), which turns an offline deployment into a live one
+for that visitor without the operator holding a key at all.
 
 ### As a check before something ships
 
@@ -384,6 +387,26 @@ thing, orchestrator and policy and ledger included, without spending anything.
 | `CRUCIBLE_REPO_MAX_FILES` | `5000` | File cap on a cloned repository |
 | `CRUCIBLE_REPO_CLONE_TIMEOUT_S` | `120` | Seconds a clone may take before it is stopped |
 | `CRUCIBLE_URL_RUN_TESTS` | unset | `1` lets a URL run execute the repository's own tests; off, the run uses the `review-read-only` policy |
+| `CRUCIBLE_BYO_ENABLED` | `1` | Lets a signed-in visitor attach their own OpenAI or Gemini key for the session; `0` removes the block and the routes |
+| `CRUCIBLE_BYO_RUN_CEILING_USD` | `1.00` | Spend ceiling for one run on a visitor's key; a visitor may raise it per run up to the hard maximum of `5.00` |
+
+A visitor can bring their own key. After signing in, `POST /api/key` with
+`{"provider": "openai" | "gemini", "api_key": "...", "models": {...}}`
+validates the key with one request to the provider's `/models` endpoint and,
+if it passes, holds it in the server's memory for that session and nothing
+else: it is written to no file, no ledger, no event and no log line, it
+expires with the session cookie, and `DELETE /api/key` or signing out drops it
+at once. `GET /api/key` reports `attached`, `provider`, `models`, the per-run
+ceiling and the session's spend, never the key. Provider is one of the two
+named vendors (no visitor-supplied base URL) and any model override must come
+from the rates table for that vendor, so the budget can always price the call.
+Runs and the conversation use the visitor's key while it is attached; each such
+run records `provider_kind: "visitor"` and the model per seat in its ledger
+header, spends against the visitor's own per-run ceiling, is booked to the
+session rather than to the operator's day, and a provider error that quotes
+the key is scrubbed before it reaches the ledger, the stream or stderr.
+Without a key, runs go on the operator's provider, or the stand-in when the
+deployment is offline, and the header says so (`"operator"` or `"offline"`).
 
 The interface takes a public repository URL as well as the demo target:
 `POST /api/run` with `{"repo_url": "...", "ref": "...", "task": "full"}`, or
@@ -427,9 +450,10 @@ python tests/test_archive.py       # 102
 python tests/test_cli.py           # 125
 python tests/test_assay.py         # 20
 python tests/test_repo.py          # 126
+python tests/test_byok.py          # 64
 ```
 
-**698 checks, no network, no spend.** The check files are plain scripts;
+**762 checks, no network, no spend.** The check files are plain scripts;
 `tests/test_suite.py` runs each one under pytest so a pipeline needs one
 command. The orchestrator suite replaces the model
 with a stand-in that answers from the prompt it is given, because a queue of

@@ -27,6 +27,8 @@ is grey-clouded, how the stream survives) is in
 | `CRUCIBLE_REPO_MAX_FILES` | no | File cap on a cloned repository, default `5000`. |
 | `CRUCIBLE_URL_RUN_TESTS` | no | Unset, a repository fetched by URL is reviewed read-only: its own tests never execute on the container. `1` turns `run_tests` on for URL runs; the ledger records `tests_enabled` either way. Tool child processes always get a scrubbed environment without `OPENAI_API_KEY` or any `CRUCIBLE_*` value. |
 | `CRUCIBLE_REPO_CLONE_TIMEOUT_S` | no | Seconds a clone may run, default `120`. Railway's 15 minute request limit is nowhere near this; the cap is there so a slow host cannot hold a run slot. |
+| `CRUCIBLE_BYO_ENABLED` | no | Default `1`: a signed-in visitor may attach their own OpenAI or Gemini key for the session (`POST /api/key`), and runs and the conversation use it while it is attached. `0` removes the block and the routes. Visitor keys are held in the process's memory only, keyed by the session, dropped on sign-out or session expiry, and are never written to disk, to a ledger, to an event, or to a log line. |
+| `CRUCIBLE_BYO_RUN_CEILING_USD` | no | Spend ceiling for one run on a visitor's key, default `1.00`. A visitor may pass a higher `ceiling_usd` per run, capped at a hard `5.00`. Visitor spend is booked to the session, shown to the visitor, and kept out of `CRUCIBLE_DAILY_CEILING_USD`, which governs operator-key runs only. |
 | `PYTHONUNBUFFERED` | recommended | `1`, so logs stream. `-u` on the start command already covers this; setting both is harmless. |
 
 Health check: `GET /healthz` returns 200 without a session. The `railway.json`
@@ -78,6 +80,11 @@ else can do.
 
    For a plumbing check before spending anything, add `CRUCIBLE_OFFLINE=1`
    and remove it once the interface loads and a run completes.
+
+   A deployment can also stay offline for good and let visitors bring their
+   own key: with `CRUCIBLE_OFFLINE=1` and no `OPENAI_API_KEY`, the page says
+   so and offers the key block, and a visitor who attaches one runs live on
+   their own account. The operator is never out of pocket either way.
 
 3. **Confirm the boot.** `railway logs` should show
    `crucible listening on :<port>` and the sign-in name. A log line starting

@@ -50,6 +50,15 @@ Those are the guarantees, and here is what they rest on:
 - **Keys stay in the environment.** `OPENAI_API_KEY` is read from the
   environment or a named env file and never written to a ledger, a result
   file or the repository. `.env` is ignored by git.
+- **Visitor keys live in memory for one session.** A key a visitor attaches
+  through `POST /api/key` is validated with one request to the vendor, then
+  held in the server process keyed by the session cookie and dropped on
+  sign-out or expiry. It is written to no file, no ledger, no event and no log
+  line, it is never echoed back, and any provider error text that quotes it is
+  scrubbed before it reaches the record or the stream (`crucible/byok.py`,
+  checked in `tests/test_byok.py`). The provider is one of two named vendors
+  and the models come from a fixed list; a visitor cannot point the hosted
+  box at an arbitrary URL.
 
 ## Supported versions
 
