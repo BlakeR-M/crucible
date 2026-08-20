@@ -403,8 +403,10 @@ def corruption_checks(tmp: Path) -> None:
           any("notarun.json" in note for note in archive.notes()))
     check("binary rubbish under a json name does not escape as an exception",
           any("binary.json" in note for note in archive.notes()))
+    noted_before = len(archive.notes())
+    archive.list_runs(10)
     check("a file is only noted once, however often it is read",
-          (archive.list_runs(10), len(archive.notes()))[1] == len(archive.notes()))
+          len(archive.notes()) == noted_before)
 
     check("a corrupt archive can still be added to",
           archive.save(report(run_id="healthy2"), stream()).exists())

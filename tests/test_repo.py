@@ -455,6 +455,8 @@ def server_checks(tmp: Path) -> None:
         check("and the chain verifies", ledger.verify() is None)
 
         section("server: a clone that fails ends the run cleanly")
+        stray_before = {p.name
+                        for p in Path(tempfile.gettempdir()).glob("crucible-repo-*")}
         server.clone = lambda url, ref, dest, **kw: real_clone(
             str(tmp / "srv" / "absent.git"), ref, dest, allow_local=True, max_files=kw["max_files"])
         status, body = server.admit_run({"repo_url": "https://github.com/octocat/absent"})
@@ -467,7 +469,8 @@ def server_checks(tmp: Path) -> None:
         check("clone_failed is on the stream", "clone_failed" in kinds, str(kinds))
         check("and run_finished closes it", kinds[-1] == "run_finished")
         check("the run holds no slot", server.REGISTRY.active() == 0)
-        stray = [p for p in Path(tempfile.gettempdir()).glob("crucible-repo-*")]
+        stray = [p for p in Path(tempfile.gettempdir()).glob("crucible-repo-*")
+                 if p.name not in stray_before]
         check("no crucible-repo-* workspace is left in the temp directory",
               not stray, str(stray[:3]))
 
