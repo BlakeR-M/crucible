@@ -18,11 +18,11 @@
 
 ---
 
-# Crucible — Visual Design Direction
+# Crucible: Visual Design Direction
 
 **Positioning:** an instrument, not a dashboard. The visual language borrows from assay reports, flight test telemetry, and evidence chains rather than from developer-tool marketing. Every choice below is calibrated to one reaction: *the person who built this has done this before.*
 
-**The metaphor, applied literally:** things go in, most are destroyed, what survives carries its scars. That means the destroyed pile gets permanent screen real estate. A product that displays how much of its own output it threw away is making the trust argument structurally instead of in copy. This is the single most important idea in the design.
+**The metaphor, applied literally:** things go in and most are destroyed; what survives carries its scars. That means the destroyed pile gets permanent screen real estate. A product that displays how much of its own output it threw away is making the trust argument structurally instead of in copy. This is the single most important idea in the design.
 
 ---
 
@@ -117,7 +117,7 @@ Dark ink on saturated fills, for the one solid button and for status chips: ink 
 
 ### 1.3 Colour is never the only channel
 
-Every status carries three redundant signals: a glyph, a text label, and colour. This survives deuteranopia, protanopia, projector washout, and a printed PDF of a screenshot, which is how half this audience will actually see it.
+Every status carries three redundant signals: a glyph, a text label, and colour. This survives deuteranopia, protanopia, projector washout, and a printed PDF of a screenshot, which is how half this audience will see it.
 
 **The glyph set: five marks, all derived from one 7px square on a 12px grid, 1.25px stroke, butt caps, no rounded corners.**
 
@@ -135,7 +135,7 @@ Drawing these yourself rather than pulling an icon set is a five-glyph job and i
 
 ## 2. Typography
 
-No network fonts. Strict CSP, fully self-contained. The stacks below resolve to genuinely good faces on macOS, Windows 10/11, and Linux desktops, which covers the whole audience.
+No network fonts. Strict CSP, fully self-contained. The stacks below resolve to good faces on macOS, Windows 10/11, and Linux desktops, which covers the whole audience.
 
 ```css
 :root {
@@ -193,7 +193,7 @@ Timestamps render as `14:22:07.418` at millisecond precision. Durations render a
 
 ### 3.1 The two-state page
 
-The pre-run and mid-run states are deliberately different pages. That transition is the demonstration.
+The pre-run and mid-run states are different pages by design. That transition is the demonstration.
 
 **Idle.** Near-empty. Ground is `--void`. Centred column 720px wide sitting at 38% viewport height. The serif wordmark `CRUCIBLE` at 16px, uppercase, `letter-spacing: 0.22em`, in `--text-tertiary`. Below it, one serif line at 28px in `--text-secondary`: *"Submit a review task. Findings that cannot survive attack will not be reported."* Below that, one input. Below the input, a single line of mono at 11px naming the active ruleset and its version. Nothing else. No feature grid, no logos, no scroll.
 
@@ -232,7 +232,7 @@ The input is a 3-row textarea, `--surface-inset`, 1px `--line`, 2px radius, 13px
 
 **Column widths:** ledger spine 4px fixed. Brief 288px fixed. Lattice fluid, 640px minimum. Assay 400px fixed.
 
-**Panels are full-bleed and separated by 1px `--line` rules. They do not float, do not have radii, and do not cast shadows.** Rounded cards drifting on a background is the most reliable tell of a template. Edge-to-edge panels divided by hairlines is what expensive instrumentation looks like.
+**Panels are full-bleed and separated by 1px `--line` rules. They sit flat, with no radius and no shadow.** Rounded cards drifting on a background is the most reliable tell of a template. Edge-to-edge panels divided by hairlines is what expensive instrumentation looks like.
 
 **Masthead, 48px.** Wordmark left. Then run identifier in mono, which is the first 8 hex characters of the ledger root, not a UUID. Then elapsed time in mono, updating every 100ms. Then phase in small-caps. Then, right-aligned and set at 20px mono 500 with the two figures in `--st-survived` and `--text-tertiary`, **the ratio**. It is the largest number on the page and it is the whole product thesis: `07 / 63 SURVIVED`.
 
@@ -248,7 +248,7 @@ The input is a 3-row textarea, `--surface-inset`, 1px `--line`, 2px radius, 13px
 
 **Footer, 28px.** Connection state, model roster, and the ledger root hash truncated to 16 hex characters in `--steel` mono, always visible, click to copy.
 
-**The ledger spine, 4px, full height, extreme left, always present.** Not a tab. Not a modal. A continuous vertical element that accrues 1px segments as entries are appended, coloured by entry class: tool call `--line`, finding raised `--line-active`, verdict `--st-survived` or `--st-refuted`, refusal `--st-refused`. Over a long run it becomes a legible seismogram of the entire session. Click anywhere on it to open a 480px full-height drawer showing the hash chain: sequence number, timestamp, entry hash, previous hash, payload digest, all in mono, plus a **VERIFY CHAIN** control that recomputes the chain client-side and prints the result with the elapsed time in milliseconds. Making tamper-evidence a permanent structural element of the layout rather than a page you navigate to is the design carrying the claim.
+**The ledger spine, 4px, full height, extreme left, always present.** It lives in the layout as a continuous vertical element rather than a tab or a modal, accruing 1px segments as entries are appended, coloured by entry class: tool call `--line`, finding raised `--line-active`, verdict `--st-survived` or `--st-refuted`, refusal `--st-refused`. Over a long run it becomes a legible seismogram of the entire session. Click anywhere on it to open a 480px full-height drawer showing the hash chain: sequence number, timestamp, entry hash, previous hash, payload digest, all in mono, plus a **VERIFY CHAIN** control that recomputes the chain client-side and prints the result with the elapsed time in milliseconds. Making tamper-evidence a permanent structural element of the layout rather than a page you navigate to is the design carrying the claim.
 
 **Policy** lives in the same drawer on a second tab: the active ruleset, every rule with its identifier, and a count of how many times each fired. Every refusal event anywhere in the product cites its rule identifier as a `--steel` mono link into this list. For this audience, a refusal that names the rule it enforced reads as control, not failure. Refusals are styled as first-class events, never as errors.
 
@@ -333,7 +333,7 @@ While a card is under attack, the verifier's current refutation attempt renders 
 
 **Verdicts:**
 
-- **Refuted.** The card's fill snaps to `--st-refuted-dim`, its text goes `--text-tertiary` with a 1px `--st-refuted` strikethrough, and 90ms later it collapses to a single 24px row and moves to the REFUTED stack. Instant. Unceremonious. Fire does not deliberate.
+- **Refuted.** The card's fill snaps to `--st-refuted-dim`, its text goes `--text-tertiary` with a 1px `--st-refuted` strikethrough, and 90ms later it collapses to a single 24px row and moves to the REFUTED stack. Instant and unceremonious.
 - **Survived.** The left border thickens from 1px to 2px in `--st-survived`, the card lifts to `--surface-overlay`, and it eases across into the SURVIVED stack over 320ms. This is the only transition in the product permitted to feel considered.
 
 ---

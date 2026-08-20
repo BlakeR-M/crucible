@@ -1,18 +1,19 @@
 # Does constrained decoding make a small local model reliable at agentic work?
 
-A gate, not a demo. The question was asked before any code was written for the
-answer, and the bars were written down before any number existed, because a bar
-set afterwards is not a bar.
+This is a gate rather than a demo. The question was asked before any code was
+written for the answer, and the bars were written down before any number
+existed, because a bar set afterwards only describes the result.
 
 ## The claim under test
 
-A 9B model running on one desktop GPU is cheap, private and nobody's dependency.
-It is also widely held to be unusable for agentic work, because agent loops
-demand exactly-shaped tool calls every step and small models produce nearly-right
-JSON. If that is really the binding constraint, then constrained decoding removes
-it outright: llama.cpp compiles a JSON schema to a grammar and consults it while
-sampling, so a token that would take the output outside the shape is never drawn.
-Malformed output stops being unlikely and becomes unrepresentable.
+A 9B model running on one desktop GPU is cheap and private, with nobody else in
+the loop. It is also widely held to be unusable for agentic work, because agent
+loops demand a tool call of the right shape at every step and small models
+produce nearly-right JSON. If that is really the binding constraint, then
+constrained decoding removes it outright: llama.cpp compiles a JSON schema to a
+grammar and consults it while sampling, so a token that would take the output
+outside the shape is never drawn. Malformed output goes from unlikely to
+unrepresentable.
 
 If that is *not* the binding constraint, the whole idea is worth dropping, and
 finding that out in an afternoon is the cheapest possible outcome.
@@ -58,26 +59,27 @@ as hand-authored GBNF. Two reasons, and the second is the honest one: schema is
 what a practitioner would actually reach for, so the result transfers; and this
 build's GBNF parser rejects the canonical negated character class from
 llama.cpp's own `json.gbnf`, which cost an hour. The mechanism measured is
-identical either way — the schema is compiled to a grammar and sampling is
+identical either way: the schema is compiled to a grammar and sampling is
 masked against it.
 
 ## How replies are graded
 
-The arena's parser is deliberately generous: it reads a tool call in whichever
+The arena's parser is generous by design: it reads a tool call in whichever
 shape the model chose, pulls JSON out of prose and code fences, and rescues line
-numbers written as `"42-45"`. That generosity was worth building — it once took a
+numbers written as `"42-45"`. That generosity was worth building. It once took a
 real run from nothing surviving to nine findings out of ten. It also makes the
 arena the wrong instrument to measure with, because every rescue is invisible and
 the unconstrained arm would look healthy on work the parser was doing for it.
 
 So every reply is graded three ways, before anything forgives it:
 
-- **strict** — the documented protocol exactly. `json.loads` on the raw text
+- **strict**: the documented protocol as written. `json.loads` on the raw text
   returns a tool call with a known name and an object of arguments, or a done
   object. Nothing was forgiven.
-- **salvaged** — not strict, but the tolerant path recovered a usable action. The
-  step worked, and it only worked because of code written to absorb this.
-- **dead** — neither. The step is burned.
+- **salvaged**: short of strict, and the tolerant path recovered a usable
+  action. The step worked, and it only worked because of code written to absorb
+  this.
+- **dead**: neither. The step is burned.
 
 Only the third costs a run directly. The second is the interesting number,
 because it measures how much the tolerant parser is carrying.
@@ -91,12 +93,12 @@ also wide enough to let one finding claim either defect.
 
 Two signals therefore. Line proximity decides candidacy; a short list of terms
 drawn from each defect's own description decides between candidates. Each planted
-defect can be claimed once — a run reporting the same defect three times has
+defect can be claimed once: a run reporting the same defect three times has
 found one defect.
 
 Findings matching nothing are reported as **unmatched**, not as wrong. The target
 was written to carry nine defects, not to be free of every other one, so an
-unmatched survivor may be a genuine defect nobody planted, and the answer key
+unmatched survivor may be a real defect nobody planted, and the answer key
 cannot support calling it a false positive.
 
 The project's own shipped scorer is reported alongside. It credits a defect if
@@ -118,7 +120,7 @@ Set in advance:
 The third is the one expected to fail. It is the Format Tax: constrain the
 sampler hard enough and the model stops thinking well, trading broken JSON for
 confidently-shaped nonsense. **A high recovery number bought with degraded
-reasoning is a failure, not a win**, and writing that down in advance is what
+reasoning counts as a failure**, and writing that down in advance is what
 stops it being argued into a win afterwards.
 
 ## What came out
@@ -140,13 +142,13 @@ Five runs per arm, in `results/arm-A.json` and `results/arm-B.json`, with
 Against the bars:
 
 - **Malformed replies fall 80% or more: cleared.** 6.2 to 0.4 per run, a 94%
-  fall. The constraint does exactly what it says about shape.
+  fall. The constraint does what it says about shape.
 - **6 of 9 defects recovered in B: missed, on the metric the gate uses.** The
   gate scores defects that survive verification, and that number is zero in
   every run of both arms, so `--compare` prints `FAIL constrained recovers 6
   of 9+ 0/9 mean`. At the hunt stage B reaches 3.2 per run and 7 of 9 across
-  the union, a 78% lift over A. That lift is real and it is not the bar that
-  was written down.
+  the union, a 78% lift over A. That lift is real, and the bar written down
+  asked for something else.
 - **Reasoning within about 15%: cleared, and only vacuously.** 0 versus 0 on
   survivors; at the hunt stage B is ahead, so the Format Tax did not show up
   at this operating point.
@@ -171,7 +173,7 @@ and D found 1.0, each with a union of 4 of 9, and between them three findings
 survived verification across ten runs (one in C, two in D), the only survivors
 this model produced anywhere. Runs took 20 to 30 minutes against about a minute
 and a half. Rerunning this pair with an allowance that lets the thinking finish
-is the open next step, and until it is run the numbers above are the numbers.
+is the open next step, and until that run happens the numbers above stand.
 
 ## Running it
 
