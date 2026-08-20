@@ -522,7 +522,7 @@ python tests/test_repo.py          # 126
 python tests/test_byok.py          # 91
 ```
 
-**796 checks, no network, no spend.** The check files are plain scripts;
+**854 checks, no network, no spend.** The check files are plain scripts;
 `tests/test_suite.py` runs each one under pytest so a pipeline needs one
 command. The orchestrator suite replaces the model
 with a stand-in that answers from the prompt it is given, because a queue of
@@ -549,6 +549,11 @@ What they actually cover, beyond the happy path:
 - an agent refused mid-run carrying on afterwards
 - 18 findings and 54 verifiers writing one hash chain concurrently, with no
   sequence number repeated or skipped
+- an agent writing a script into scratch and asking a permitted interpreter to
+  run it, which is the escape that stood open until an audit found it
+- the demo's answer key refused to the hunters reviewing beside it
+- every vendor on the shelf refusing a `metered = false` declaration, which
+  would price its calls at zero and switch the ceiling off entirely
 
 ---
 
