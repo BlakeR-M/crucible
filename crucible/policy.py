@@ -358,7 +358,8 @@ def review_policy(workspace: Path, *, run_tests: bool = True) -> Policy:
     }
     if run_tests:
         rules["run_tests"] = ToolRule(
-            path_scopes=[workspace], commands=["python", "pytest", "node", "npm"]
+            path_scopes=[workspace],
+            commands=["python", "python3", "pytest", "node", "npm"]
         )
         return Policy(
             "review", rules,

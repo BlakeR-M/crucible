@@ -73,8 +73,9 @@ def policy_checks(tmp: Path) -> None:
     check("a sibling directory sharing the scope's prefix is refused",
           not pol.check("read_file", {"path": str(lookalike / "secret.txt")}))
 
+    elsewhere = tmp / "elsewhere" / "config" / "SAM"
     check("an absolute path elsewhere on disk is refused",
-          not pol.check("read_file", {"path": r"C:\Windows\System32\config\SAM"}))
+          not pol.check("read_file", {"path": str(elsewhere)}))
 
     check("a tool with no path scope refuses a path outright",
           not Policy("p", {"ping": ToolRule()}).check("ping", {"path": str(work)}))
@@ -105,14 +106,17 @@ def policy_checks(tmp: Path) -> None:
     check("python -m with no module is refused",
           not pol.check("run_tests", {"command": "python -m"}))
     check("an interpreter pointed at a file outside the workspace is refused",
-          not pol.check("run_tests", {"command": r"python C:\Windows\evil.py"}))
+          not pol.check("run_tests",
+                        {"command": f'python "{lookalike / "evil.py"}"'}))
     check("a runner pointed at a config outside the workspace is refused",
           not pol.check("run_tests",
-                        {"command": r"pytest C:\Windows\Temp\conftest.py"}))
+                        {"command": f'pytest "{lookalike / "conftest.py"}"'}))
 
     section("policy: commands")
     check("a permitted binary runs",
           bool(pol.check("run_tests", {"command": "python -m pytest"})))
+    check("python3 is permitted, because that is the binary's name on Linux",
+          bool(pol.check("run_tests", {"command": "python3 -m pytest"})))
     check("running the workspace's own tests still works",
           bool(pol.check("run_tests",
                          {"command": "python -m unittest discover"})))
@@ -124,7 +128,8 @@ def policy_checks(tmp: Path) -> None:
     check("npm test still works",
           bool(pol.check("run_tests", {"command": "npm test"})))
     check("an absolute path to a permitted binary still runs",
-          bool(pol.check("run_tests", {"command": r'"C:\Python311\python.exe" -m pytest'})))
+          bool(pol.check("run_tests",
+                         {"command": f'"{sys.executable}" -m pytest'})))
     check("case and extension do not smuggle a binary past the list",
           bool(pol.check("run_tests", {"command": "PYTHON.EXE -m pytest"})))
     check("an unlisted binary is refused",
@@ -202,7 +207,7 @@ def policy_checks(tmp: Path) -> None:
     check("the policy renders as data for the run log",
           "read_file" in pol.as_dict()["tools"]
           and pol.as_dict()["tools"]["run_tests"]["commands"] == [
-              "python", "pytest", "node", "npm"])
+              "python", "python3", "pytest", "node", "npm"])
 
 
 # ------------------------------------------------------------------- ledger
