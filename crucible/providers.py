@@ -115,6 +115,14 @@ RATES: dict[str, tuple[float, float]] = {
     "qwen/qwen3.8-2.4t-a95b": (2.00, 6.00),
 }
 
+# Stand-ins that reach no vendor and bill nothing. Named explicitly, because
+# an unpriced model falls to the table maximum on purpose and that rule was
+# quietly charging the free demo: the offline run booked the dearest rate in
+# the table, so its reported spend climbed every time an expensive model was
+# added, and a long enough free run would have been refused by its own
+# ceiling. A stand-in costs nothing, and now says so.
+FREE_MODELS = frozenset({"offline"})
+
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MODELS: dict[Tier, str] = {
     Tier.PLANNER: "gpt-5",
@@ -337,7 +345,7 @@ class Budget:
         return self.settle(model, 0.0, prompt_tokens, output_tokens)
 
     def _price(self, model: str, prompt_tokens: int, output_tokens: int) -> float:
-        if self.unmetered:
+        if self.unmetered or model in FREE_MODELS:
             return 0.0
         # An unknown model is priced at the most expensive known rate rather
         # than at zero, so adding a model cannot silently disable the cap.

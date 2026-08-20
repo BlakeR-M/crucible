@@ -242,6 +242,18 @@ def validation_checks() -> None:
           unknown >= max(spent._price(m, 1_000_000, 1_000_000) for m in _RATES),
           f"{unknown} vs known {known}")
 
+    # The stand-in reaches no vendor, so it bills nothing. It used to fall
+    # through the unpriced-model rule to the dearest rate in the table, which
+    # made the free demo report a spend that climbed whenever an expensive
+    # model was added, and put a long free run within reach of its own ceiling.
+    check("the offline stand-in bills nothing",
+          spent._price("offline", 5_000_000, 5_000_000) == 0.0)
+    tight = _Budget(ceiling_usd=0.60)
+    for _ in range(200):
+        tight.settle("offline", 0.0, 4000, 1200)
+    check("two hundred stand-in calls stay clear of a 60 cent ceiling",
+          tight.spent_usd == 0.0, f"spent {tight.spent_usd}")
+
     held = server.KEYS.get(sid)
     check("the table holds the key in memory with the session's expiry",
           held is not None and held["key"] == GOOD_KEY
