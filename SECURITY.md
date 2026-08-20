@@ -42,11 +42,13 @@ Those are the guarantees, and here is what they rest on:
   the policy independently and is the only mode in which the check is
   adversarial; the default mode trusts the policy recorded in the file and
   says so.
-- **The hosted demo is a demo.** It reviews a fixed synthetic target, needs
-  the demo credentials to start at all, and caps spend per run, per
-  conversation and per day. Its open items are listed in
-  `docs/KNOWN-ISSUES.md` (admission control, CSRF, CSP among them). Do not
-  point it, or a deployment of it, at code you have not read.
+- **The hosted demo is a demo.** It runs open on purpose (`CRUCIBLE_PUBLIC=1`)
+  with the free stand-in model, caps runs in flight, and caps spend per run,
+  per conversation and per day; a deployment that sets neither the public
+  switch nor a credential pair refuses to start rather than opening by
+  accident. Its open items are listed in `docs/KNOWN-ISSUES.md` (CSRF and CSP
+  among them). Do not point it, or a deployment of it, at code you have not
+  read.
 - **Keys stay in the environment.** `OPENAI_API_KEY` is read from the
   environment or a named env file and never written to a ledger, a result
   file or the repository. `.env` is ignored by git.

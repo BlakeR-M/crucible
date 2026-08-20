@@ -13,7 +13,8 @@ is grey-clouded, how the stream survives) is in
 
 | variable | required | notes |
 |---|---|---|
-| `CRUCIBLE_USER`, `CRUCIBLE_PASS` | yes | Demo sign-in. There is no built-in pair: with either unset the process prints why and exits with code 2, so a deployment that forgot them stays down rather than open. |
+| `CRUCIBLE_PUBLIC` | for an open deployment | `1` runs the interface without a sign-in, which is how the hosted demo runs: the stand-in model and the ceilings are the protection, and the gate would only hide the product. An explicit switch, so a deployment that set neither this nor credentials stays down rather than open by accident. |
+| `CRUCIBLE_USER`, `CRUCIBLE_PASS` | for a gated deployment | Sign-in for a private deployment. There is no built-in pair: with `CRUCIBLE_PUBLIC` unset and either of these missing, the process prints why and exits with code 2. |
 | `CRUCIBLE_PROVIDER` | no | `openai` (default) or `gemini`. Gemini uses `GEMINI_API_KEY` and Google's OpenAI-compatible endpoint; per-tier models via `CRUCIBLE_MODEL_PLANNER`, `CRUCIBLE_MODEL_WORKER`, `CRUCIBLE_MODEL_VERIFIER`. |
 | `OPENAI_API_KEY` | yes, for paid runs with the openai provider | Read from the environment when a run or conversation starts. Absent, the server still boots and every run fails with a plain "no OPENAI_API_KEY" event. |
 | `PORT` | set by Railway | Defaults to `8420` locally. |
@@ -63,34 +64,28 @@ else can do.
    railway up
    ```
 
-2. **Set the variables** (service, Variables tab, or the RAW editor). The
-   minimum for a live demo:
+2. **Set the variables** (service, Variables tab, or the RAW editor). How the
+   hosted demo runs, open and free:
    ```
-   CRUCIBLE_USER=<demo user>
-   CRUCIBLE_PASS=<demo password>
+   CRUCIBLE_PUBLIC=1
+   CRUCIBLE_OFFLINE=1
    CRUCIBLE_SECRET=<long random string>
-   OPENAI_API_KEY=<key>
    PYTHONUNBUFFERED=1
    ```
-   Seal `OPENAI_API_KEY`, `CRUCIBLE_PASS` and `CRUCIBLE_SECRET` (three-dot
-   menu on the variable) so they stay out of the UI. Each variable change
-   redeploys, so set them all in one go. Check the CLI's noun with
-   `railway variables --help` before scripting this; it has been singular and
-   plural across releases.
-
-   For a plumbing check before spending anything, add `CRUCIBLE_OFFLINE=1`
-   and remove it once the interface loads and a run completes.
-
-   A deployment can also stay offline for good and let visitors bring their
-   own key: with `CRUCIBLE_OFFLINE=1` and no `OPENAI_API_KEY`, the page says
-   so and offers the key block, and a visitor who attaches one runs live on
-   their own account. The operator is never out of pocket either way.
+   Everyone gets the tool, the stand-in model answers for free, and a visitor
+   who wants a live model attaches their own key. The operator is never out
+   of pocket. For a gated deployment on the operator's key instead, set
+   `CRUCIBLE_USER`, `CRUCIBLE_PASS` and `OPENAI_API_KEY`, and leave
+   `CRUCIBLE_PUBLIC` unset. Seal the secrets (three-dot menu on the variable)
+   so they stay out of the UI. Each variable change redeploys, so set them
+   all in one go. Check the CLI's noun with `railway variables --help` before
+   scripting this; it has been singular and plural across releases.
 
 3. **Confirm the boot.** `railway logs` should show
-   `crucible listening on :<port>` and the sign-in name. A log line starting
-   `crucible refuses to start` means a credential variable is missing; the
-   deploy restarts up to ten times (the policy in `railway.json`) and then
-   stays down until the variable is set.
+   `crucible listening on :<port>`. A log line starting
+   `crucible refuses to start` means the deployment chose neither
+   `CRUCIBLE_PUBLIC=1` nor a credential pair; the deploy restarts up to ten
+   times (the policy in `railway.json`) and then stays down until one is set.
 
 4. **Add the domain.** Service, Settings, Public Networking, Custom Domain,
    `crucible.flow-through.com.au`. Railway hands back two records and both are
@@ -110,8 +105,8 @@ else can do.
    Back in Railway, wait for the green tick on the domain. Railway issues the
    certificate itself.
 
-6. **Try it end to end.** Open `https://crucible.flow-through.com.au`, sign in
-   with the demo pair, start the "full" review of the demo target, watch it
+6. **Try it end to end.** Open `https://crucible.flow-through.com.au`, skip
+   past the info page, start the "full" review of the demo target, watch it
    finish, download the ledger from the interface, and on any machine with
    the repository run:
    ```

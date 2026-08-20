@@ -406,22 +406,17 @@ def hardening_checks() -> None:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
         conn.request("GET", "/")
         resp = conn.getresponse()
-        page = resp.read().decode("utf-8", "replace")
-        check("a stranger at the root gets the public page, status 200",
-              resp.status == 200, str(resp.status))
-        check("and it carries the evidence and the description tag",
-              "docs/evidence" in page and 'name="description"' in page)
-        check("and the corner points at the repository, with the sign-in "
-              "form advertised nowhere",
-              "github.com/BlakeR-M/crucible" in page
-              and 'href="/login"' not in page)
+        resp.read()
+        check("gated: a stranger at the root walks to the sign-in",
+              resp.status == 302
+              and resp.getheader("Location") == "/login", str(resp.status))
         conn.close()
 
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
         conn.request("GET", "/somewhere-else")
         resp = conn.getresponse()
         resp.read()
-        check("every other unauthenticated path still walks to the gate",
+        check("gated: every other unauthenticated path walks there too",
               resp.status == 302
               and resp.getheader("Location") == "/login", str(resp.status))
         conn.close()
@@ -434,9 +429,8 @@ def hardening_checks() -> None:
             f"{k}={v}" for k, v in c2.cookies.items())})
         resp = conn.getresponse()
         page = resp.read().decode("utf-8", "replace")
-        check("signed in, the root is the live app rather than the cover",
-              resp.status == 200 and "docs/evidence" not in page
-              and 'id="stage"' in page, str(resp.status))
+        check("signed in, the root is the live app",
+              resp.status == 200 and 'id="stage"' in page, str(resp.status))
         conn.close()
 
         status, _ = c.request("GET", "/static/../index.html")
@@ -482,6 +476,83 @@ def hardening_checks() -> None:
         httpd.server_close()
 
 
+def public_mode_checks() -> None:
+    section("routes: CRUCIBLE_PUBLIC opens the tool itself")
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    port = httpd.server_address[1]
+    server.PUBLIC = True
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request("GET", "/")
+        resp = conn.getresponse()
+        page = resp.read().decode("utf-8", "replace")
+        conn.close()
+        check("a stranger at the root gets the tool, no sign-in",
+              resp.status == 200 and 'id="stage"' in page, str(resp.status))
+        check("with the info page in front and the repository linked",
+              'id="intro"' in page and "github.com/BlakeR-M/crucible" in page)
+        check("and the description tag, so a pasted link renders",
+              'name="description"' in page)
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request("GET", "/login")
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        check("/login walks back to the tool",
+              resp.status == 302 and resp.getheader("Location") == "/",
+              str(resp.status))
+
+        c = Client(port)
+        status, body = c.request("GET", "/api/tasks")
+        check("the API answers without a session and says it is public",
+              status == 200 and body.get("public") is True, str(status))
+        status, body = c.request("GET", "/healthz")
+        check("healthz carries the posture", body.get("public") is True)
+    finally:
+        server.PUBLIC = False
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def admission_checks() -> None:
+    section("admission: deciding and claiming the slot is one step")
+    reg = server.RunRegistry()
+    gate = threading.Barrier(20)
+    outcomes: list[str] = []
+    record = threading.Lock()
+
+    def attempt(i: int) -> None:
+        gate.wait()
+        state, why = reg.admit(f"burst-{i}", max_active=2,
+                               daily_ceiling_usd=8.0)
+        with record:
+            outcomes.append("in" if state else why)
+
+    threads = [threading.Thread(target=attempt, args=(i,)) for i in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    check("a burst of twenty claims exactly the two slots",
+          outcomes.count("in") == 2, f"{outcomes.count('in')} admitted")
+    check("every refusal names the full house",
+          outcomes.count("busy") == 18, str(outcomes))
+
+    reg2 = server.RunRegistry()
+    reg2.day_spend()
+    reg2.add_spend(9.0)
+    state, why = reg2.admit("broke", max_active=2, daily_ceiling_usd=8.0)
+    check("a spent day refuses with its own reason",
+          state is None and why == "ceiling", why)
+    state, why = reg2.admit("visitor-paid", max_active=2,
+                            daily_ceiling_usd=None)
+    check("a run on a visitor's key ignores the operator's day",
+          state is not None and why == "", why)
+
+
 def main() -> None:
     byok.probe_models = fake_probe
     with tempfile.TemporaryDirectory() as raw:
@@ -491,6 +562,8 @@ def main() -> None:
         run_checks(tmp)
         route_checks()
         hardening_checks()
+        public_mode_checks()
+        admission_checks()
     print(f"\n{PASSED} checks passed, {len(FAILED)} failed")
     if FAILED:
         for name in FAILED:

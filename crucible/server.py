@@ -97,6 +97,14 @@ DEMO_USER = os.environ.get("CRUCIBLE_USER", "")
 DEMO_PASS = os.environ.get("CRUCIBLE_PASS", "")
 SECRET = os.environ.get("CRUCIBLE_SECRET", secrets.token_hex(32))
 
+# CRUCIBLE_PUBLIC=1 opens the interface to everyone: no sign-in, /login walks
+# back to the tool. Made for a deployment that runs the free stand-in model
+# (or visitor keys), where the ceilings and the policy are the protection and
+# a gate would only hide the product. It is an explicit switch, so a
+# deployment that set neither this nor credentials still refuses to start.
+PUBLIC = os.environ.get("CRUCIBLE_PUBLIC", "").strip().lower() in (
+    "1", "true", "yes", "on")
+
 TASKS = {
     "full": "Review this codebase for correctness defects. Report only real bugs.",
     "money": "Review this codebase for defects in money handling, rounding and totals.",
@@ -142,15 +150,42 @@ class RunRegistry:
 
     def create(self, run_id: str, source: dict | None = None) -> dict:
         with self._lock:
-            state = {
-                "id": run_id, "events": [], "finished": False,
-                "subscribers": [], "started": time.time(), "report": None,
-                # Where the code came from: {} for the demo target, otherwise
-                # repo_url and repo_ref at creation, commit_sha once cloned.
-                "source": dict(source or {}),
-            }
-            self._runs[run_id] = state
-            return state
+            return self._create_locked(run_id, source)
+
+    def _create_locked(self, run_id: str, source: dict | None) -> dict:
+        state = {
+            "id": run_id, "events": [], "finished": False,
+            "subscribers": [], "started": time.time(), "report": None,
+            # Where the code came from: {} for the demo target, otherwise
+            # repo_url and repo_ref at creation, commit_sha once cloned.
+            "source": dict(source or {}),
+        }
+        self._runs[run_id] = state
+        return state
+
+    def admit(self, run_id: str, *, max_active: int,
+              daily_ceiling_usd: float | None,
+              source: dict | None = None) -> tuple[dict | None, str]:
+        """Check the caps and claim the slot in one lock acquisition.
+
+        Reading the active count under one acquisition and creating the run
+        under the next is how a burst of simultaneous requests all read a low
+        number and all pass. Deciding and claiming as a single step closes
+        that. daily_ceiling_usd is None for a run on a visitor's key, which
+        the operator's day never pays for. Returns (state, "") on admission,
+        or (None, "busy" | "ceiling") for the caller to word the refusal.
+        """
+        with self._lock:
+            active = sum(1 for r in self._runs.values() if not r["finished"])
+            if active >= max_active:
+                return None, "busy"
+            if daily_ceiling_usd is not None:
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if today != self._spend_day:
+                    self._spend_day, self._spend_usd = today, 0.0
+                if self._spend_usd >= daily_ceiling_usd:
+                    return None, "ceiling"
+            return self._create_locked(run_id, source), ""
 
     def get(self, run_id: str) -> dict | None:
         with self._lock:
@@ -474,20 +509,23 @@ def start_run(task_key: str, repo_url: str | None = None,
             return None, str(exc)
         source = {"repo_url": url, "repo_ref": ref}
     visitor = visitor_record(sid)
-    if REGISTRY.active() >= MAX_CONCURRENT_RUNS:
-        return None, (f"{MAX_CONCURRENT_RUNS} runs are already in flight. "
-                      f"The arena runs a bounded number at once, deliberately. "
-                      f"Try again in a minute.")
-    if visitor is None and REGISTRY.day_spend() >= DAILY_CEILING_USD:
-        return None, (f"the daily ceiling of ${DAILY_CEILING_USD:.2f} is spent. "
-                      f"It resets at midnight UTC. Attach a key of your own "
-                      f"to run against a live model now.")
     if not source and not TARGET.is_dir():
         return None, "the demo target codebase is missing from this deployment"
 
     task = TASKS.get(task_key, TASKS["full"])
     run_id = uuid.uuid4().hex[:12]
-    REGISTRY.create(run_id, source)
+    state, refusal = REGISTRY.admit(
+        run_id, max_active=MAX_CONCURRENT_RUNS,
+        daily_ceiling_usd=None if visitor else DAILY_CEILING_USD,
+        source=source)
+    if refusal == "busy":
+        return None, (f"{MAX_CONCURRENT_RUNS} runs are already in flight. "
+                      f"The arena runs a bounded number at once, deliberately. "
+                      f"Try again in a minute.")
+    if refusal == "ceiling":
+        return None, (f"the daily ceiling of ${DAILY_CEILING_USD:.2f} is spent. "
+                      f"It resets at midnight UTC. Attach a key of your own "
+                      f"to run against a live model now.")
     ceiling = byo_ceiling(ceiling_usd) if visitor else RUN_CEILING_USD
 
     def finish(reason: str, spent: float = 0.0) -> None:
@@ -690,7 +728,7 @@ class Handler(BaseHTTPRequestHandler):
         return ""
 
     def _authed(self) -> bool:
-        return valid_session(self._cookie("crucible_session"))
+        return PUBLIC or valid_session(self._cookie("crucible_session"))
 
     def _send(self, code: int, body: bytes, content_type: str,
               extra: dict | None = None) -> None:
@@ -733,10 +771,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._json(200, {"ok": True, "active": REGISTRY.active(),
                              "day_spend_usd": round(REGISTRY.day_spend(), 4),
-                             "offline": _offline_enabled()})
+                             "offline": _offline_enabled(),
+                             "public": PUBLIC})
             return
 
         if path in ("/login", "/login/"):
+            if PUBLIC:
+                # Open deployment: there is nothing to sign into, so an old
+                # bookmark lands on the tool instead of a dead form.
+                self._send(302, b"", "text/plain", {"Location": "/"})
+                return
             self._file("login.html", "text/html; charset=utf-8")
             return
 
@@ -761,11 +805,6 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authed():
             if path.startswith("/api/"):
                 self._json(401, {"error": "not signed in"})
-            elif path == "/":
-                # The public face: what this is, the recorded run, and how to
-                # check it. Signing in swaps this page for the live app, and
-                # every other path keeps walking visitors to the gate.
-                self._file("landing.html", "text/html; charset=utf-8")
             else:
                 self._send(302, b"", "text/plain", {"Location": "/login"})
             return
@@ -802,6 +841,7 @@ class Handler(BaseHTTPRequestHandler):
                              "repo_max_mb": REPO_MAX_BYTES / 1_000_000,
                              "repo_max_files": REPO_MAX_FILES,
                              "offline": _offline_enabled(),
+                             "public": PUBLIC,
                              "byo": byo_status(self._sid()),
                              "runs": REGISTRY.listing()})
             return
@@ -1074,10 +1114,17 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve() -> None:
     unset = missing_credentials()
-    if unset:
+    if PUBLIC:
+        # Opened on purpose: CRUCIBLE_PUBLIC=1 is the operator's explicit,
+        # deliberate choice to run the interface without a gate, so the
+        # credential requirement steps aside. Every spend ceiling, cap and
+        # policy stays exactly as it is.
+        pass
+    elif unset:
         print("crucible refuses to start: set " + " and ".join(unset)
-              + " in the environment. There are no built-in credentials, "
-              "so a deployment without them would be open to anyone.",
+              + " in the environment (or CRUCIBLE_PUBLIC=1 to run the "
+              "interface open on purpose). There are no built-in credentials, "
+              "so a deployment that chose neither would be open by accident.",
               file=sys.stderr)
         raise SystemExit(2)
     RUNS.mkdir(parents=True, exist_ok=True)

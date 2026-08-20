@@ -518,6 +518,11 @@ async function repoLimits() {
       const idle = $('idle');
       if (idle && !$('offline-notice')) idle.insertBefore(note, idle.firstChild);
     }
+    if (d.public) {
+      // An open deployment has nothing to sign out of.
+      const out = document.querySelector('.head .out');
+      if (out) out.hidden = true;
+    }
     byoRender(d.byo || {});
   } catch { /* the field still works without the numbers */ }
 }

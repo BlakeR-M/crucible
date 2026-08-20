@@ -30,8 +30,8 @@ of a command, so `python -c "..."` handed the process arbitrary code and left
 the sandbox entirely. No shell metacharacter was involved, so the guard standing
 in front of that path never fired. Reproduced, fixed, and the regression test is
 in [`tests/test_core.py`](tests/test_core.py) (the checks headed "an
-allowlisted binary is not an allowlisted behaviour"). Nine further defects it
-found in itself are written up unfixed in
+allowlisted binary is not an allowlisted behaviour"). Eight further defects it
+found in itself are written up, open, in
 [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md).
 
 **Constrained decoding lifted a 9B local model's defect discovery by 78%.**
@@ -263,8 +263,8 @@ orchestrator, policy and ledger run against the demo target with a stand-in
 model that answers from the prompt, so nothing is spent:
 
 ```bash
-CRUCIBLE_OFFLINE=1 CRUCIBLE_USER=demo CRUCIBLE_PASS=demo python main.py
-# then open http://localhost:8420 and sign in as demo / demo
+CRUCIBLE_OFFLINE=1 CRUCIBLE_PUBLIC=1 python main.py
+# then open http://localhost:8420: the tool, no sign-in
 ```
 
 With offline unset, `crucible run`, `crucible models`, the interface and the
@@ -384,7 +384,8 @@ thing, orchestrator and policy and ledger included, without spending anything.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `CRUCIBLE_USER` / `CRUCIBLE_PASS` | none | Demo credentials. Both required: the server exits with code 2 when either is unset |
+| `CRUCIBLE_PUBLIC` | unset | `1` opens the interface to everyone, sign-in and all: made for a deployment on the stand-in model or visitor keys, where the ceilings are the protection |
+| `CRUCIBLE_USER` / `CRUCIBLE_PASS` | none | Gate credentials for a private deployment. With `CRUCIBLE_PUBLIC` unset, both are required and the server exits with code 2 when either is missing |
 | `OPENAI_API_KEY` | none | Required for paid runs; read when a run starts |
 | `CRUCIBLE_ENV_FILE` | `.env` at the repo root | File the key is read from when it is absent from the environment |
 | `CRUCIBLE_OFFLINE` | unset | `1` runs everything with a local stand-in model and spends nothing |
@@ -464,10 +465,10 @@ python tests/test_archive.py       # 102
 python tests/test_cli.py           # 129
 python tests/test_assay.py         # 20
 python tests/test_repo.py          # 126
-python tests/test_byok.py          # 81
+python tests/test_byok.py          # 89
 ```
 
-**784 checks, no network, no spend.** The check files are plain scripts;
+**792 checks, no network, no spend.** The check files are plain scripts;
 `tests/test_suite.py` runs each one under pytest so a pipeline needs one
 command. The orchestrator suite replaces the model
 with a stand-in that answers from the prompt it is given, because a queue of

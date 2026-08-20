@@ -341,3 +341,30 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 .gate button.act:hover { background: var(--ink); color: var(--paper); }
 .gate .fine { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--rule-hair);
               font-size: var(--t-note); color: var(--ink-muted); line-height: 1.7; }
+
+/* ------------------------------------------------------------------ intro */
+/* The info page in front of the tool. Skippable, reopened from the header. */
+
+.intro { position: fixed; inset: 0; z-index: 40; display: grid;
+         place-items: center; padding: 24px;
+         background: rgba(20, 19, 14, .38); }
+.intro[hidden] { display: none; }
+.intro-card { width: 100%; max-width: 560px; max-height: 86vh;
+              overflow-y: auto; background: var(--paper);
+              border: 1px solid var(--rule); padding: 26px 30px; }
+.intro-kicker { font-size: var(--t-note); color: var(--ink-muted);
+                letter-spacing: .1em; text-transform: uppercase; }
+.intro-card h1 { font-family: var(--face-display); font-weight: 400;
+                 font-style: italic; font-size: var(--t-title);
+                 margin: 6px 0 10px; }
+.intro-card p { margin: 10px 0; font-size: var(--t-sub); }
+.intro-repo a { font-family: var(--face-mono); font-size: var(--t-sub); }
+.intro-actions { margin-top: 18px; padding-top: 14px;
+                 border-top: 1px solid var(--rule-hair); }
+#intro-go { font: inherit; font-size: var(--t-sub); padding: 8px 22px;
+            cursor: pointer; background: var(--ink); color: var(--paper);
+            border: 0; }
+#intro-go:hover { background: var(--ink-muted); }
+
+.head .hlink { font-size: var(--t-marg); color: var(--ink-muted);
+               white-space: nowrap; }

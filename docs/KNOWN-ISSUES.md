@@ -8,28 +8,15 @@ the build machine, so the figure is reported here rather than checkable, which
 is itself the kind of gap this file exists to record.
 
 The fixes from that review and the ones that followed it are in the history
-and listed below for the record. Nine findings stay open and are recorded here
-rather than quietly dropped, because a project whose argument is that a system
-should show what it threw away cannot keep its own list private.
+and listed below for the record. Eight findings stay open and are recorded
+here rather than quietly dropped, because a project whose argument is that a
+system should show what it threw away cannot keep its own list private.
 
 Each entry says what it costs and why it is still open.
 
 ---
 
 ## Open
-
-### Admission control is check-then-act
-`server.py` reads the active-run count, reads the daily spend, and then creates
-the run as three separate acquisitions of the registry lock, with gaps between
-them. Twenty simultaneous requests all read zero and all pass. The concurrency cap and the daily ceiling are both advisory under
-a burst.
-
-**Cost:** on a credentialed demo with a handful of invited evaluators, low. On
-anything public, this is the first thing to fix. The per-run budget still holds,
-because that one reserves properly, so the exposure is bounded at N runs times
-the run ceiling rather than unbounded.
-
-**Fix:** admit under one lock that also inserts the run.
 
 ### No CSRF defence beyond SameSite=Lax
 `POST /api/run` and `/api/login` have no token. SameSite=Lax stops the ordinary
@@ -140,6 +127,12 @@ Full detail in the commit history.
 - The public `/static/` prefix honoured `..`, so the signed-in app shell was
   readable without a session. Names that climb are refused before serving;
   resolved containment already kept everything outside `web/` unreachable.
+- Admission control was check-then-act: the active-run count, the daily spend
+  and the run's creation were three separate acquisitions of the registry
+  lock, so a burst of simultaneous requests could all read zero and all pass.
+  Fixed the day the interface opened to the public: `RunRegistry.admit`
+  decides and claims the slot in one acquisition, and a twenty-thread burst
+  test holds it to exactly the configured slots.
 
 ---
 

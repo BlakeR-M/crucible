@@ -3,8 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>Crucible</title>
+<title>Crucible: adversarial verification for AI code review</title>
+<meta name="description" content="AI finds bugs. Most of them are wrong. Crucible sends every finding to independent verifiers that try to tear it down, and reports the ones still standing. Run it here, or take it from GitHub.">
+<link rel="canonical" href="https://crucible.flow-through.com.au/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Crucible">
+<meta property="og:title" content="Crucible: adversarial verification for AI code review">
+<meta property="og:description" content="AI finds bugs. Most of them are wrong. Every finding is attacked by independent verifiers before it is reported, and the run lands in a hash-chained ledger you can check yourself.">
+<meta property="og:url" content="https://crucible.flow-through.com.au/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Crucible: adversarial verification for AI code review">
+<meta name="twitter:description" content="AI finds bugs. Most of them are wrong. This proves which ones aren't.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23FBFAF7'/><path d='M2.5 8.2 L13.5 8.2' stroke='%238C1515' stroke-width='1.4'/></svg>">
 <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -15,9 +24,36 @@
     <span class="wm">Crucible</span>
     <span class="thesis">AI finds bugs. Most of them are wrong. This proves which ones aren&rsquo;t.</span>
     <span class="id mono" id="runid"></span>
+    <a class="hlink" id="about-open" href="#">what is this</a>
+    <a class="hlink" href="https://github.com/BlakeR-M/crucible">GitHub</a>
     <form class="out" method="post" action="/api/logout"><button type="submit">Sign out</button></form>
   </div>
 </header>
+
+<div class="intro" id="intro" hidden>
+  <div class="intro-card" role="dialog" aria-modal="true" aria-labelledby="intro-h">
+    <div class="intro-kicker">An info page. Skip it any time.</div>
+    <h1 id="intro-h">Crucible</h1>
+    <p><b>AI finds bugs. Most of them are wrong. This proves which ones
+    aren&rsquo;t.</b></p>
+    <p>Ask a model to review code and it hands you findings that sound right.
+    Plenty are wrong. Crucible sends every finding to three separate verifiers
+    whose job is to tear it down, and reports the ones still standing.</p>
+    <p>One recorded run against the bundled demo project raised 16 findings
+    and reported 9. It cost 27 US cents. The full ledger is in the repo, and
+    one command replays every decision in it on your machine.</p>
+    <p>Every agent action is checked against a written policy before it runs,
+    and the whole run lands in a hash-chained ledger you can download from
+    this page.</p>
+    <p>This deployment runs a free stand-in model, so have a play. Attach your
+    own OpenAI or Gemini key to run a live one. The code is standard-library
+    Python, and it runs on your machine too:</p>
+    <p class="intro-repo"><a href="https://github.com/BlakeR-M/crucible">github.com/BlakeR-M/crucible</a></p>
+    <div class="intro-actions">
+      <button id="intro-go" type="button">Open the tool</button>
+    </div>
+  </div>
+</div>
 
 <div class="split">
 
@@ -61,7 +97,7 @@
         <form class="byo" id="byo" autocomplete="off">
           <label for="byo-key">Bring your own key</label>
           <p class="hint">Run the arena against a live model on your own account. The key stays in
-             this server&rsquo;s memory for this session only: it is dropped when you sign out or the
+             this server&rsquo;s memory for this session only: it is dropped when you forget it or the
              session expires, and it is written to nothing.</p>
           <div class="row" id="byo-form">
             <select id="byo-provider" aria-label="Provider">
@@ -100,5 +136,26 @@
 </div>
 
 <script src="/static/app.js"></script>
+<script>
+(function () {
+  var intro = document.getElementById('intro');
+  function open() { intro.hidden = false; }
+  function close() {
+    intro.hidden = true;
+    try { localStorage.setItem('crucible-intro-seen', '1'); } catch (e) {}
+  }
+  document.getElementById('intro-go').addEventListener('click', close);
+  intro.addEventListener('click', function (e) { if (e.target === intro) close(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !intro.hidden) close();
+  });
+  document.getElementById('about-open').addEventListener('click', function (e) {
+    e.preventDefault(); open();
+  });
+  var seen = null;
+  try { seen = localStorage.getItem('crucible-intro-seen'); } catch (e) {}
+  if (seen !== '1') open();
+})();
+</script>
 </body>
 </html>
