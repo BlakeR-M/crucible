@@ -1,17 +1,14 @@
 /* Crucible, client side.
  *
- * Two streams feed this page and they are kept apart. The chat stream carries
- * one turn of conversation and ends; the run stream carries a whole review and
- * is replayed from the beginning if the connection drops. Neither knows about
- * the other, which is why the agent can start a run mid-sentence and the right
- * pane simply begins filling.
- *
- * All run state is derived from run events, and every one carries its index, so
- * a reconnect that replays lands in the same place rather than double counting.
+ * One stream feeds this page: the run stream, replayed from the beginning if
+ * the connection drops. All run state is derived from its events, and every
+ * one carries its index, so a reconnect that replays lands in the same place
+ * rather than double counting. A narration strip walks a first-time viewer
+ * through the phases as the real run reaches them.
  *
  * Text reaches the DOM through textContent only. It is written by language
- * models reading a stranger's code, which is exactly the text that should never
- * be parsed as markup.
+ * models reading a stranger's code, which is exactly the text that should
+ * never be parsed as markup.
  */
 
 const $ = (id) => document.getElementById(id);
@@ -27,7 +24,7 @@ const S = {
   agents: new Map(), claims: new Map(),
   found: 0, keep: 0, out: 0, refused: 0,
   calls: 0, reads: 0, spend: 0,
-  talking: false,
+  narStep: 0, narQueue: [], narBusy: false,
 };
 
 const money = (n) => '$' + (n || 0).toFixed(4);
@@ -45,132 +42,47 @@ function clock() {
   $('tick-clock').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/* ------------------------------------------------------------------ chat */
+/* -------------------------------------------------------------- narration */
 
-function turn(who, cls) {
-  const t = el('div', 'turn ' + cls);
-  t.append(el('div', 'by', who));
-  $('log').append(t);
-  $('log').scrollTop = $('log').scrollHeight;
-  return t;
+/* The step-by-step walkthrough. Each line appears the moment the real run
+ * reaches that phase, so the narration is driven by events, never by a
+ * script pretending. Steps only move forward. */
+
+const NARRATE = [
+  'The policy comes first: these agents may read the code, write only ' +
+    'scratch, and run only the test commands. Everything else is refused ' +
+    'before it executes.',
+  'The planner reads the codebase and cuts the ground into lanes.',
+  'Hunters spread out, one per lane, blind to each other, so four copies ' +
+    'of the same easy bug cannot pass for a review.',
+  'Findings start landing. Each one is a claim, and a claim has earned ' +
+    'nothing yet.',
+  'Now every finding is attacked: three verifiers each, told to refute it, ' +
+    'with uncertainty counting as refutation. Two of three decide.',
+  'The whole time, a probe has been genuinely trying to escape the ' +
+    'sandbox. Refused, and every refusal is in the record.',
+  '', // written by onFinished with the run's own numbers
+];
+
+/* Each line holds the screen long enough to read, even when the run's early
+   events arrive in a burst; late lines queue behind it. */
+const NAR_HOLD_MS = 2800;
+
+function narrate(step, text) {
+  if (step <= S.narStep) return;
+  S.narStep = step;
+  S.narQueue.push([step, text || NARRATE[step - 1]]);
+  if (!S.narBusy) drainNarrate();
 }
 
-async function boot() {
-  try {
-    const res = await fetch('/api/chat/opening');
-    if (res.status === 401) { location.href = '/login'; return; }
-    const d = await res.json();
-    const t = turn('Crucible', 'it');
-    t.append(el('p', null, d.opening));
-    meter(d.spent_usd, d.ceiling_usd);
-  } catch (err) {
-    const t = turn('Crucible', 'it');
-    t.append(el('p', 'notice', 'The server could not be reached. ' + err.message));
-  }
-}
-
-function meter(spent, ceiling) {
-  $('meter').textContent =
-    `this conversation has cost ${money(spent)} of its ${money(ceiling)} allowance`;
-}
-
-$('msg').addEventListener('input', (e) => {
-  e.target.style.height = 'auto';
-  e.target.style.height = Math.min(140, e.target.scrollHeight) + 'px';
-});
-$('msg').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('ask').requestSubmit(); }
-});
-
-$('ask').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const box = $('msg');
-  const message = box.value.trim();
-  if (!message || S.talking) return;
-  S.talking = true;
-  box.value = ''; box.style.height = 'auto';
-  $('send').disabled = true;
-
-  turn('You', 'you').append(el('p', null, message));
-  const mine = turn('Crucible', 'it');
-  const thinking = el('p', 'thinking', 'thinking');
-  mine.append(thinking);
-  const did = el('div', 'did');
-  mine.append(did);
-
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
-    });
-    if (res.status === 401) { location.href = '/login'; return; }
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      thinking.remove();
-      mine.append(el('p', 'notice', d.error || 'That was refused.'));
-      return;
-    }
-    await readChat(res, mine, thinking, did);
-  } catch (err) {
-    thinking.remove();
-    mine.append(el('p', 'notice', 'Lost the connection. ' + err.message));
-  } finally {
-    S.talking = false;
-    $('send').disabled = false;
-    box.focus();
-  }
-});
-
-async function readChat(res, mine, thinking, did) {
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = '', answer = null;
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const parts = buf.split('\n\n');
-    buf = parts.pop();
-    for (const part of parts) {
-      const line = part.split('\n').find(l => l.startsWith('data: '));
-      if (!line) continue;
-      let e; try { e = JSON.parse(line.slice(6)); } catch { continue; }
-
-      if (e.kind === 'chat_tool') {
-        const s = el('span', null, (e.tool || '') +
-          (e.args && Object.keys(e.args).length ? '  ' + Object.values(e.args).join(' ') : ''));
-        did.append(s);
-        // The agent starting a review is the moment the right pane wakes up.
-        if (e.tool === 'start_review' && e.run_id) attach(e.run_id);
-      } else if (e.kind === 'chat_refusal') {
-        did.append(el('span', 'no', 'refused  ' + (e.reason || '')));
-      } else if (e.kind === 'chat_delta') {
-        thinking.remove();
-        if (!answer) { answer = el('p'); mine.append(answer); }
-        answer.textContent += e.text || '';
-        $('log').scrollTop = $('log').scrollHeight;
-      } else if (e.kind === 'chat_answer') {
-        thinking.remove();
-        if (!answer) { answer = el('p'); mine.append(answer); }
-        if (e.text && e.text.length > answer.textContent.length) answer.textContent = e.text;
-      } else if (e.kind === 'chat_error') {
-        thinking.remove();
-        mine.append(el('p', 'notice', e.text || 'Something went wrong.'));
-      } else if (e.kind === 'chat_done') {
-        meter(e.spent_usd, e.ceiling_usd);
-        if (e.provider_kind === 'visitor') byoRefresh();
-      }
-    }
-  }
-  thinking.remove();
-  if (!answer) mine.append(el('p', 'thinking', 'It had nothing to add.'));
-  $('log').scrollTop = $('log').scrollHeight;
-
-  // Always ask, never only on the first turn. A visitor who runs a second
-  // review otherwise watches the first one's numbers sitting at "done" while
-  // the new one runs unseen, which is worse than showing nothing.
-  findRun();
+function drainNarrate() {
+  const item = S.narQueue.shift();
+  if (!item) { S.narBusy = false; return; }
+  S.narBusy = true;
+  $('narrate').hidden = false;
+  $('narrate-step').textContent = `step ${item[0]} of ${NARRATE.length}`;
+  $('narrate-text').textContent = item[1];
+  setTimeout(drainNarrate, NAR_HOLD_MS);
 }
 
 async function findRun() {
@@ -208,6 +120,7 @@ function reset(runId) {
   S.runId = runId; S.started = Date.now(); S.seen = -1; S.provider = null;
   S.agents.clear(); S.claims.clear();
   S.found = S.keep = S.out = S.refused = S.calls = S.reads = 0; S.spend = 0;
+  S.narStep = 0; S.narQueue = []; $('narrate').hidden = true;
   $('idle').style.display = 'none';
   $('thread').innerHTML = ''; $('closing').innerHTML = '';
   ['s-found', 's-out', 's-keep'].forEach(id => $(id).textContent = '0');
@@ -276,6 +189,7 @@ function onStart(e) {
   }
   S.agents.set('__planner', root);
   $('state').textContent = 'running';
+  narrate(1);
 }
 
 /* The clone, narrated. It sits above the planner in the thread, since it
@@ -316,6 +230,9 @@ function onPhase(e) {
                   verify: 'trying to disprove the findings' };
   $('tick-state').textContent = words[e.phase] || e.phase;
   $('state').textContent = words[e.phase] || e.phase;
+  if (e.phase === 'plan') narrate(2);
+  if (e.phase === 'hunt') narrate(3);
+  if (e.phase === 'verify') narrate(5);
 }
 
 function onAgent(e) {
@@ -362,6 +279,7 @@ function onProbe(e) {
     (e.attempts && e.attempts.length ? e.attempts.length + ' attempts' : '');
   a.acts.append(mkAct(e.held === false ? 'GOT THROUGH' : 'blocked',
                       detail, true));
+  narrate(6);
 }
 
 function verifierHost(agentId) {
@@ -384,6 +302,7 @@ function onAgentStopped(e) {
 
 function onRaised(e) {
   S.found += 1; $('s-found').textContent = S.found;
+  narrate(4);
   const wrap = el('div', 'node');
   const box = el('div', 'claim trying');
   box.append(el('span', 't', e.title));
@@ -466,6 +385,8 @@ function onFinished(e) {
   });
 
   const killed = e.raised - e.survived;
+  narrate(7, `${Say(e.survived)} survived and ${say(killed)} were destroyed. ` +
+    'The full ledger is below: verify the chain without leaving this browser.');
   const box = el('div', 'closing');
   box.append(el('h2', null, 'What survived'));
   const p = el('p');
@@ -705,5 +626,5 @@ $('repo').addEventListener('submit', async (e) => {
   }
 });
 
-boot();
+findRun();
 repoLimits();

@@ -58,19 +58,13 @@
 
 <div class="split">
 
-  <!-- Left: the conversation. This is the front door. -->
-  <section class="talk">
-    <div class="log" id="log"></div>
-    <form class="ask" id="ask">
-      <textarea id="msg" rows="1" placeholder="Ask it anything, or tell it to start a review"
-                autocomplete="off"></textarea>
-      <button type="submit" id="send" title="Send">Send</button>
-    </form>
-    <div class="meter" id="meter"></div>
-  </section>
-
-  <!-- Right: what the agents are actually doing. -->
+  <!-- What the agents are actually doing. This is the whole page. -->
   <section class="work">
+
+    <div class="narrate" id="narrate" hidden>
+      <span class="step" id="narrate-step"></span>
+      <span id="narrate-text"></span>
+    </div>
 
     <div class="score" id="score">
       <div class="n"><b id="s-found">0</b><span>found</span></div>
@@ -85,12 +79,10 @@
       <div class="idle" id="idle">
         <p><b>Nothing has run yet in this session.</b></p>
         <div class="demo-run">
-          <button type="button" id="demo-go">Run a review of the demo codebase</button>
-          <p class="hint">A bundled booking service with nine planted defects.
-             Watch what gets found, what gets destroyed, and what survives.</p>
+          <button type="button" id="demo-go">See how it works</button>
+          <p class="hint">A real review of the bundled demo codebase, narrated
+             step by step: the hunt, the kills, and what survives.</p>
         </div>
-        <p>Or ask the agent on the left, in words: it can start a review, and
-           it can tell you what the policy lets an agent do.</p>
         <form class="repo" id="repo" autocomplete="off">
           <label for="repo-url">Review a public repository</label>
           <div class="row">

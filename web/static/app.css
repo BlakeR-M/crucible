@@ -1,14 +1,13 @@
 /* Crucible.
  *
- * Two panes. On the left you talk to the thing; on the right you watch it
- * work. The conversation is the front door because a visitor who can ask
- * "why was that one thrown out" never needs the layout explained to them,
- * which is the failure every previous version of this page had.
+ * One pane: you watch it work. A narration strip walks a first-time viewer
+ * through the phases as the real run reaches them, which replaced the chat
+ * pane once the chat's scripted answers read as exactly that.
  *
- * Across the top of the working pane are three numbers that carry the whole
- * product: found, disproved, proven. Read left to right they say the
- * counterintuitive thing out loud, which is that most of what an AI finds is
- * wrong and the achievement is throwing it away.
+ * Across the top are three numbers that carry the whole product: found,
+ * disproved, proven. Read left to right they say the counterintuitive thing
+ * out loud, which is that most of what an AI finds is wrong and the
+ * achievement is throwing it away.
  *
  * Red means one thing: disproved, or refused for want of authority. There is
  * no green, because a finding that survives is set in plain ink and that is
@@ -78,69 +77,24 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 .head .id { margin-left: auto; font-size: var(--t-marg); color: var(--ink-faint); }
 
 .split {
-  display: grid; grid-template-columns: 430px 1fr;
   height: calc(100vh - 52px);
-}
-
-/* --------------------------------------------------------------- the talk */
-
-.talk {
-  border-right: 1px solid var(--rule); min-height: 0;
-  display: grid; grid-template-rows: 1fr auto auto; background: var(--paper);
-}
-.log { overflow-y: auto; padding: 18px 20px; }
-
-.turn { margin-bottom: 16px; animation: ink .16s ease-out both; }
-@keyframes ink { from { opacity: 0; } }
-.turn .by {
-  font-size: var(--t-note); letter-spacing: .09em; text-transform: uppercase;
-  color: var(--ink-faint); margin-bottom: 3px;
-}
-.turn.you .by { color: var(--rule-strong); }
-.turn p { font-size: var(--t-sub); }
-.turn.you p { color: var(--ink-muted); }
-.turn.it p + p { margin-top: 8px; }
-
-/* What the agent did while answering. Shown, because a visitor watching it go
-   and read the run is watching the thing work. */
-.did { margin: 6px 0 0; }
-.did span {
-  display: block; font-family: var(--face-mono); font-size: var(--t-marg);
-  color: var(--ink-faint); line-height: 1.6;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.did span.no { color: var(--rubric); }
-
-.thinking { font-size: var(--t-sub); color: var(--ink-faint); font-style: italic; }
-
-.ask {
-  display: flex; gap: 9px; align-items: flex-end;
-  padding: 12px 20px; border-top: 1px solid var(--rule-hair);
-}
-.ask textarea {
-  flex: 1; resize: none; max-height: 140px;
-  font-family: var(--face-text); font-size: var(--t-sub); line-height: 1.45;
-  color: var(--ink); background: var(--paper);
-  border: 1px solid var(--rule); padding: 8px 10px;
-}
-.ask textarea:focus { outline: none; border-color: var(--ink); }
-.ask button {
-  font-family: var(--face-text); font-size: var(--t-sub);
-  padding: 8px 16px; background: var(--paper); color: var(--ink);
-  border: 1px solid var(--ink); cursor: pointer;
-  transition: background .12s ease, color .12s ease;
-}
-.ask button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
-.ask button:disabled { border-color: var(--rule); color: var(--ink-faint); cursor: default; }
-
-.meter {
-  padding: 0 20px 10px; font-size: var(--t-note); color: var(--ink-faint);
-  font-variant-numeric: tabular-nums lining-nums;
+  display: flex; justify-content: center;
 }
 
 /* --------------------------------------------------------------- the work */
 
-.work { min-height: 0; display: grid; grid-template-rows: auto 1fr auto; }
+.work { min-height: 0; display: grid; grid-template-rows: auto auto 1fr auto;
+        width: 100%; max-width: 1060px; }
+
+/* The step-by-step walkthrough, driven by the run's own events. */
+.narrate {
+  padding: 12px 24px; border-bottom: 1px solid var(--rule-hair);
+  background: var(--paper-leaf); font-size: var(--t-sub);
+}
+.narrate .step {
+  display: block; font-size: var(--t-note); color: var(--ink-muted);
+  letter-spacing: .1em; text-transform: uppercase; margin-bottom: 2px;
+}
 
 /* The three numbers. The whole product, read left to right. */
 .score {
@@ -303,8 +257,7 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 
 @media (max-width: 1080px) {
   body { overflow: auto; }
-  .split { grid-template-columns: 1fr; height: auto; }
-  .talk { border-right: 0; border-bottom: 1px solid var(--rule); height: 62vh; }
+  .split { height: auto; }
   .work { height: auto; }
   .stage { overflow: visible; }
   .score { flex-wrap: wrap; gap: 14px; }
