@@ -358,8 +358,10 @@ function onTool(e) {
 function onProbe(e) {
   const a = S.agents.get('prober');
   if (!a) return;
+  const detail = e.note || e.agent_notes ||
+    (e.attempts && e.attempts.length ? e.attempts.length + ' attempts' : '');
   a.acts.append(mkAct(e.held === false ? 'GOT THROUGH' : 'blocked',
-                      e.attempt || '', true));
+                      detail, true));
 }
 
 function verifierHost(agentId) {

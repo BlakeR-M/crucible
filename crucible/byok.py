@@ -46,13 +46,13 @@ KEY_SHAPE = re.compile(r"^[A-Za-z0-9._\-]{16,256}$")
 REDACTED = "[redacted]"
 # The shortest run of a key that is still recognisably the key. A provider's
 # error body is clipped to a few hundred characters before it becomes a
-# message, and a clip that lands inside the key leaves a prefix; prefixes at
-# least this long are scrubbed too.
+# message, and a clip that lands inside the key leaves a prefix or, clipped
+# from the left, a suffix; fragments at least this long are scrubbed too.
 FRAGMENT_MIN = 8
 
 
 class Redactor:
-    """Scrubs registered secrets, and their leading fragments, out of text.
+    """Scrubs registered secrets, and their fragments, out of text.
 
     Applied at the boundaries where text leaves the process: the ledger, the
     event stream, an exception message, stderr. A provider's 4xx body may
@@ -82,12 +82,14 @@ class Redactor:
         for secret in secrets:
             if secret in text:
                 text = text.replace(secret, REDACTED)
-            # Longest prefix first, so a partial key becomes one marker
-            # rather than a marker followed by the tail of the key.
+            # Longest fragment first, so a partial key becomes one marker
+            # rather than a marker followed by the rest of the key. Prefixes
+            # cover a message clipped from the right; suffixes cover one
+            # clipped from the left.
             for length in range(len(secret) - 1, FRAGMENT_MIN - 1, -1):
-                fragment = secret[:length]
-                if fragment in text:
-                    text = text.replace(fragment, REDACTED)
+                for fragment in (secret[:length], secret[-length:]):
+                    if fragment in text:
+                        text = text.replace(fragment, REDACTED)
         return text
 
     def scrub_value(self, value):

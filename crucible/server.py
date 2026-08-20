@@ -414,8 +414,11 @@ def session_expiry(cookie: str) -> float:
 def credentials_ok(user: str, password: str) -> bool:
     if not DEMO_USER or not DEMO_PASS:
         return False
-    return (hmac.compare_digest(user, DEMO_USER)
-            and hmac.compare_digest(password, DEMO_PASS))
+    # Compared as bytes: compare_digest raises on non-ASCII str, and a public
+    # login form is exactly where non-ASCII input arrives.
+    return (hmac.compare_digest(user.encode("utf-8"), DEMO_USER.encode("utf-8"))
+            and hmac.compare_digest(password.encode("utf-8"),
+                                    DEMO_PASS.encode("utf-8")))
 
 
 def missing_credentials() -> list[str]:
@@ -672,6 +675,10 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # quieter, and no query strings logged
         print(f"[{self.log_date_time_string()}] {fmt % args}")
 
+    def version_string(self) -> str:
+        # The stdlib appends the Python version; the name alone is plenty.
+        return self.server_version
+
     # ---------------------------------------------------------- helpers
 
     def _cookie(self, name: str) -> str:
@@ -695,7 +702,8 @@ class Handler(BaseHTTPRequestHandler):
         for key, value in (extra or {}).items():
             self.send_header(key, value)
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _json(self, code: int, payload: dict) -> None:
         self._send(code, json.dumps(payload).encode("utf-8"), "application/json")
@@ -710,6 +718,13 @@ class Handler(BaseHTTPRequestHandler):
                    {"Cache-Control": "no-cache"})
 
     # ------------------------------------------------------------- GET
+
+    def do_HEAD(self) -> None:
+        # HEAD is GET with the body withheld. Link checkers and uptime
+        # monitors probe with it, and the stdlib default answers 501, which
+        # reads as a broken site. _send leaves the body off for HEAD; the
+        # headers, Content-Length included, are the ones GET would send.
+        self.do_GET()
 
     def do_GET(self) -> None:
         route = urlparse(self.path)
@@ -727,6 +742,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/static/"):
             name = path[len("/static/"):]
+            # /static/ answers ahead of the sign-in gate so the login page can
+            # style itself, which means a name that climbs out of it would
+            # reach the rest of web/ without a session. Climbing is refused
+            # here; resolved containment in _file guards the filesystem.
+            if ".." in name:
+                self._send(404, b"not found", "text/plain")
+                return
             kinds = {".css": "text/css; charset=utf-8",
                      ".js": "application/javascript; charset=utf-8",
                      ".svg": "image/svg+xml"}
@@ -739,6 +761,11 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authed():
             if path.startswith("/api/"):
                 self._json(401, {"error": "not signed in"})
+            elif path == "/":
+                # The public face: what this is, the recorded run, and how to
+                # check it. Signing in swaps this page for the live app, and
+                # every other path keeps walking visitors to the gate.
+                self._file("landing.html", "text/html; charset=utf-8")
             else:
                 self._send(302, b"", "text/plain", {"Location": "/login"})
             return
@@ -803,7 +830,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         route = urlparse(self.path)
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._json(400, {"error": "Content-Length is not a number"})
+            return
+        if length < 0:
+            self._json(400, {"error": "Content-Length is not a number"})
+            return
         raw = self.rfile.read(length) if length else b""
 
         if route.path == "/api/login":

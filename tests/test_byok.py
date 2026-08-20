@@ -18,10 +18,13 @@ the same way.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import hmac
 import http.client
 import io
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -127,6 +130,9 @@ def redactor_checks() -> None:
     clipped = f"openai 401: {GOOD_KEY}"[:24]
     check("a clipped prefix of the key is scrubbed too",
           GOOD_KEY[:8] not in r.scrub(clipped), r.scrub(clipped))
+    tail = f"...er {GOOD_KEY[-16:]} was rejected"
+    check("a clipped suffix of the key is scrubbed too",
+          GOOD_KEY[-8:] not in r.scrub(tail), r.scrub(tail))
     check("text without the key is untouched", r.scrub("hello there") == "hello there")
     nested = r.scrub_value({"a": [GOOD_KEY, {"b": f"x {GOOD_KEY} y"}], "n": 3})
     check("nested values are walked", GOOD_KEY not in json.dumps(nested) and nested["n"] == 3)
@@ -367,6 +373,112 @@ def route_checks() -> None:
         httpd.server_close()
 
 
+def hardening_checks() -> None:
+    section("routes: the public face holds against a hostile client")
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    port = httpd.server_address[1]
+    try:
+        c = Client(port)
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request("HEAD", "/login")
+        resp = conn.getresponse()
+        head_body = resp.read()
+        check("HEAD answers instead of 501", resp.status == 200)
+        check("with the headers GET would send and no body",
+              int(resp.getheader("Content-Length") or 0) > 0
+              and head_body == b"")
+        check("the server header keeps the Python version to itself",
+              "python" not in (resp.getheader("Server") or "").lower(),
+              str(resp.getheader("Server")))
+        conn.close()
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request("HEAD", "/")
+        resp = conn.getresponse()
+        resp.read()
+        check("HEAD on the root takes the same route as GET",
+              resp.status in (200, 302), str(resp.status))
+        conn.close()
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request("GET", "/")
+        resp = conn.getresponse()
+        page = resp.read().decode("utf-8", "replace")
+        check("a stranger at the root gets the public page, status 200",
+              resp.status == 200, str(resp.status))
+        check("and it carries the evidence and the description tag",
+              "docs/evidence" in page and 'name="description"' in page)
+        check("and the sign-in stays one link away", 'href="/login"' in page)
+        conn.close()
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request("GET", "/somewhere-else")
+        resp = conn.getresponse()
+        resp.read()
+        check("every other unauthenticated path still walks to the gate",
+              resp.status == 302
+              and resp.getheader("Location") == "/login", str(resp.status))
+        conn.close()
+
+        c2 = Client(port)
+        c2.request("POST", "/api/login", {"user": "t", "password": "t"},
+                   form=True)
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request("GET", "/", headers={"Cookie": "; ".join(
+            f"{k}={v}" for k, v in c2.cookies.items())})
+        resp = conn.getresponse()
+        page = resp.read().decode("utf-8", "replace")
+        check("signed in, the root is the live app rather than the cover",
+              resp.status == 200 and "docs/evidence" not in page
+              and 'id="stage"' in page, str(resp.status))
+        conn.close()
+
+        status, _ = c.request("GET", "/static/../index.html")
+        check("a static name that climbs out of static/ is refused",
+              status == 404, str(status))
+        status, _ = c.request("GET", "/static/app.css")
+        check("an honest static name still serves", status == 200, str(status))
+
+        expires = str(int(time.time()) + 3600)
+        c.cookies["crucible_session"] = f"{expires}." + "0" * 64
+        status, _ = c.request("GET", "/api/key")
+        check("a forged session signature is refused", status == 401)
+
+        past = str(int(time.time()) - 10)
+        stale = hmac.new(server.SECRET.encode(), past.encode(),
+                         hashlib.sha256).hexdigest()
+        c.cookies["crucible_session"] = f"{past}.{stale}"
+        status, _ = c.request("GET", "/api/key")
+        check("an expired cookie with a true signature is refused",
+              status == 401)
+        c.cookies.clear()
+
+        status, _ = c.request("POST", "/api/login",
+                              {"user": "ünïcode", "password": "x"},
+                              form=True)
+        check("a non-ASCII sign-in is refused rather than crashed",
+              status == 303 and "crucible_session" not in c.cookies,
+              str(status))
+        status, _ = c.request("POST", "/api/login",
+                              {"user": "t", "password": "t"}, form=True)
+        check("the true pair still signs in after the bytes comparison",
+              status == 303 and "crucible_session" in c.cookies)
+        c.request("POST", "/api/logout")
+
+        with socket.create_connection(("127.0.0.1", port), timeout=30) as raw:
+            raw.sendall(b"POST /api/login HTTP/1.1\r\n"
+                        b"Host: x\r\nContent-Length: abc\r\n\r\n")
+            reply = raw.recv(1000).decode("latin-1", "replace")
+        check("a malformed Content-Length is a 400, not a dropped connection",
+              " 400 " in reply.split("\r\n")[0], reply.split("\r\n")[0])
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def main() -> None:
     byok.probe_models = fake_probe
     with tempfile.TemporaryDirectory() as raw:
@@ -375,6 +487,7 @@ def main() -> None:
         validation_checks()
         run_checks(tmp)
         route_checks()
+        hardening_checks()
     print(f"\n{PASSED} checks passed, {len(FAILED)} failed")
     if FAILED:
         for name in FAILED:

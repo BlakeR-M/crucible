@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crucible: adversarial verification for AI code review</title>
+<meta name="description" content="AI finds bugs. Most of them are wrong. Crucible attacks every finding with independent verifiers before it is reported, checks every agent action against a written policy, and records the run in a hash-chained ledger you can verify yourself.">
+<link rel="canonical" href="https://crucible.flow-through.com.au/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Crucible">
+<meta property="og:title" content="Crucible: adversarial verification for AI code review">
+<meta property="og:description" content="AI finds bugs. Most of them are wrong. Every finding is attacked by independent verifiers before it is reported, and the whole run is written to a hash-chained ledger you can check yourself.">
+<meta property="og:url" content="https://crucible.flow-through.com.au/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Crucible: adversarial verification for AI code review">
+<meta name="twitter:description" content="AI finds bugs. Most of them are wrong. This proves which ones aren't.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23FBFAF7'/><path d='M2.5 8.2 L13.5 8.2' stroke='%238C1515' stroke-width='1.4'/></svg>">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  /* The certificate's cover: same paper, same rules as the interface behind
+     the gate. This page scrolls; the app shell keeps its fixed panes. */
+  html, body { height: auto; }
+  body { overflow: auto; }
+  .cover { max-width: 720px; margin: 0 auto; padding: 48px 24px 72px; }
+  .cover header { display: flex; align-items: baseline; gap: 18px;
+                  padding-bottom: 14px; border-bottom: 1px solid var(--rule); }
+  .cover .wm { font-family: var(--face-display); font-style: italic;
+               font-size: var(--t-title); }
+  .cover .gate-link { margin-left: auto; font-size: var(--t-marg);
+                      color: var(--ink-muted); white-space: nowrap; }
+  .cover .inmatter { margin-top: 40px; font-size: var(--t-note);
+                     color: var(--ink-muted); letter-spacing: .1em;
+                     text-transform: uppercase; }
+  .cover h1 { font-family: var(--face-display); font-weight: 400;
+              font-size: var(--t-huge); line-height: 1.15; margin: 8px 0 16px; }
+  .cover p { margin: 12px 0; }
+  .cover .muted { color: var(--ink-muted); }
+  .tally { margin: 36px 0; padding: 22px 0; text-align: center;
+           border-top: 1px solid var(--rule-hair);
+           border-bottom: 1px solid var(--rule-hair); }
+  .tally .fig-line { font-family: var(--face-mono); font-size: var(--t-huge);
+                     font-variant-numeric: tabular-nums lining-nums; }
+  .tally .fig-line .kill { color: var(--rubric); }
+  .tally .cap { margin-top: 6px; font-size: var(--t-marg);
+                color: var(--ink-muted); }
+  .cover h2 { font-family: var(--face-display); font-weight: 400;
+              font-style: italic; font-size: var(--t-title);
+              margin: 40px 0 10px; }
+  .cover h3 { font-size: var(--t-body); font-weight: 600; margin: 22px 0 6px; }
+  .cover pre { margin: 14px 0; padding: 14px 16px; overflow-x: auto;
+               background: var(--paper-leaf);
+               border: 1px solid var(--rule-hair);
+               font-family: var(--face-mono); font-size: var(--t-marg);
+               line-height: 1.7; }
+  .cover code { font-family: var(--face-mono); font-size: .92em; }
+  .cover ul { margin: 12px 0 12px 22px; }
+  .cover li { margin: 6px 0; }
+  .cover footer { margin-top: 56px; padding-top: 16px;
+                  border-top: 1px solid var(--rule-hair);
+                  font-size: var(--t-marg); color: var(--ink-muted); }
+</style>
+</head>
+<body>
+<main class="cover">
+  <header>
+    <span class="wm">Crucible</span>
+    <a class="gate-link" href="/login">Access is by invitation &rarr; sign in</a>
+  </header>
+
+  <div class="inmatter">Certificate of examination</div>
+  <h1>AI finds bugs. Most of them are wrong.<br>This proves which ones aren&rsquo;t.</h1>
+
+  <p>A language model asked to review code will always find problems, and many
+  of them read well and are wrong. The output looks like work and
+  costs the reader more time than it saves. Crucible puts its weight on the
+  second half of the job: every finding its agents raise is handed to three
+  independent verifiers whose only instruction is to refute it, and only
+  findings that survive a majority are reported.</p>
+
+  <div class="tally">
+    <div class="fig-line">09 / 16 <span class="kill">survived</span></div>
+    <div class="cap">one recorded run: sixteen findings raised, seven destroyed
+    by verification, nine reported</div>
+  </div>
+
+  <p>That run is public and checkable. On 2026&#8209;08&#8209;17 the arena
+  reviewed its bundled demo target, a synthetic booking service carrying nine
+  planted defects and a committed answer key. The planner cut the ground into
+  six lanes and a hunter worked each lane blind to the others. Every finding
+  went to three verifiers instructed to treat uncertainty as refutation, and
+  two votes of three decided survival. Sixteen findings were raised. Nine
+  survived. The run cost 27&nbsp;US&nbsp;cents. The full hash&#8209;chained
+  ledger ships in the repository, and one command replays every decision in it
+  on your machine.</p>
+
+  <h2>How it is built</h2>
+
+  <h3>Authority is a document, not an assumption</h3>
+  <p>An agent&rsquo;s power is declared in one policy object, printed on
+  screen during the run, carried in the record, and checked before any tool
+  code executes. Containment is judged on the resolved path, commands are
+  compared past <code>argv[0]</code>, and a policy check that raises is a
+  refusal. Refusals are first&#8209;class events, shown with the reason and
+  written to the record.</p>
+
+  <h3>The record is tamper&#8209;evident</h3>
+  <p>Every run writes an append&#8209;only ledger where each entry carries the
+  SHA&#8209;256 of the entry before it, so the file proves its own order and
+  completeness. <code>crucible verify</code> recomputes the chain and replays
+  every policy decision independent of the server that produced it.</p>
+
+  <h3>The budget holds against work in flight</h3>
+  <p>Every model call reserves its worst case before it spends and settles to
+  real usage after, so a dozen concurrent agents can pass the same ceiling
+  check and the run still stops where it was told to.</p>
+
+  <h2>It reviewed itself, and lost</h2>
+  <p>Pointed at its own source, Crucible reported a critical sandbox escape in
+  its own policy engine: the command allowlist checked only the first word, so
+  <code>python -c</code> handed the process arbitrary code with no shell
+  metacharacter for the other guard to see. Reproduced end to end, fixed, and
+  the regression tests are in
+  <a href="https://github.com/BlakeR-M/crucible/blob/main/tests/test_core.py">tests/test_core.py</a>,
+  under the heading &ldquo;an allowlisted binary is not an allowlisted
+  behaviour&rdquo;. The findings that stay open are published in
+  <a href="https://github.com/BlakeR-M/crucible/blob/main/docs/KNOWN-ISSUES.md">docs/KNOWN&#8209;ISSUES.md</a>,
+  because a system whose argument is showing what it threw away keeps its own
+  list public.</p>
+
+  <h2>Check it yourself</h2>
+  <p>The repository is the product; this page is its cover sheet. Python 3.11
+  or newer, standard library only.</p>
+  <pre>git clone https://github.com/BlakeR-M/crucible
+cd crucible
+
+# the recorded run above: recompute the chain, replay every decision
+python -m crucible.cli verify docs/evidence/2026-08-17-demo-target-16-raised-9-survived.jsonl
+
+# the whole arena, live in your terminal, keyless, spends nothing
+python -m crucible.cli run demo_target --score   # with CRUCIBLE_OFFLINE=1 set
+
+# every check in the suite
+python -m pip install pytest &amp;&amp; python -m pytest -q</pre>
+  <p class="muted">The verify command exits 1. That is the tool being
+  consistent: the exit code reports the review gate, and nine findings
+  surviving means the demo target failed its review. An intact record of a
+  failed gate is exactly what the file claims to be.</p>
+
+  <p><a href="https://github.com/BlakeR-M/crucible"><b>github.com/BlakeR-M/crucible</b></a>
+  holds the source, the tests, the evidence and the method.</p>
+
+  <footer>
+    Built by Blake Rowlands-Mowle, Canberra. The interface behind the
+    <a href="/login">sign&#8209;in</a> runs live examinations under the same
+    policy and the same ledger shown here.
+  </footer>
+</main>
+</body>
+</html>

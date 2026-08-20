@@ -3,11 +3,14 @@
 Crucible was reviewed by its own pattern: four reviewers fanned out across the
 codebase, and every finding they raised went to independent verifiers
 instructed to refute it. Forty-five findings were raised and eighteen survived.
+Those counts were read off the runs at the time; the early ledgers stayed on
+the build machine, so the figure is reported here rather than checkable, which
+is itself the kind of gap this file exists to record.
 
-Eleven fixes are in the history, from that review and the ones that followed
-it, and they are listed below for the record. Nine findings stay open and are
-recorded here rather than quietly dropped, because a project whose argument is
-that a system should show what it threw away cannot keep its own list private.
+The fixes from that review and the ones that followed it are in the history
+and listed below for the record. Nine findings stay open and are recorded here
+rather than quietly dropped, because a project whose argument is that a system
+should show what it threw away cannot keep its own list private.
 
 Each entry says what it costs and why it is still open.
 
@@ -16,9 +19,9 @@ Each entry says what it costs and why it is still open.
 ## Open
 
 ### Admission control is check-then-act
-`server.py` reads the active-run count and the daily spend under separate locks,
-then creates the run under a third. Twenty simultaneous requests all read zero
-and all pass. The concurrency cap and the daily ceiling are both advisory under
+`server.py` reads the active-run count, reads the daily spend, and then creates
+the run as three separate acquisitions of the registry lock, with gaps between
+them. Twenty simultaneous requests all read zero and all pass. The concurrency cap and the daily ceiling are both advisory under
 a burst.
 
 **Cost:** on a credentialed demo with a handful of invited evaluators, low. On
@@ -134,6 +137,9 @@ Full detail in the commit history.
 - Search took an untrusted pattern into a backtracking engine. Nested
   quantifiers are now refused; the line-length cap that was tried first is not a
   fix, since `(a+)+b` does not finish at any length worth allowing.
+- The public `/static/` prefix honoured `..`, so the signed-in app shell was
+  readable without a session. Names that climb are refused before serving;
+  resolved containment already kept everything outside `web/` unreachable.
 
 ---
 
