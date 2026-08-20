@@ -80,6 +80,34 @@ def policy_checks(tmp: Path) -> None:
     check("a tool with no path scope refuses a path outright",
           not Policy("p", {"ping": ToolRule()}).check("ping", {"path": str(work)}))
 
+    section("policy: the answers are out of reach of the hunters")
+    # The demo workspace carries the list of planted defects, and a hunter that
+    # reads it scores full marks having found nothing. Removing the carve-out
+    # fails these.
+    answers = work / ".answer_key.json"
+    answers.write_text('{"defects": []}', encoding="utf-8")
+    verdict = pol.check("read_file", {"path": str(answers)})
+    check("the scoring key inside the workspace is refused to read_file",
+          not verdict)
+    check("the refusal names the file rather than the scope",
+          ".answer_key.json" in verdict.reason)
+    check("the scoring key is refused to search as well",
+          not pol.check("search", {"path": str(answers), "pattern": "defect"}))
+    check("an ordinary file beside it still reads",
+          bool(pol.check("read_file", {"path": str(work / "src" / "app.py")})))
+    check("a copy of the key outside the workspace is refused too",
+          not pol.check("read_file", {"path": str(lookalike / ".answer_key.json")}))
+
+    # The record carries the policy so a reader can replay every decision in
+    # it. A carve-out that fails to survive that round trip would let a replay
+    # allow calls the live run refused, which is the record disagreeing with
+    # the run it describes.
+    replayed = Policy.from_dict(pol.as_dict())
+    check("the carve-out survives the trip through the record",
+          not replayed.check("read_file", {"path": str(answers)}))
+    check("and the replayed policy still admits ordinary reads",
+          bool(replayed.check("read_file", {"path": str(work / "src" / "app.py")})))
+
     section("policy: an allowlisted binary is not an allowlisted behaviour")
     # Every one of these uses a permitted binary and contains no shell
     # metacharacter, so the metacharacter guard never sees them. Each was
@@ -200,6 +228,31 @@ def policy_checks(tmp: Path) -> None:
     check("an ordinary search still finds what it should",
           "app.py" in box.invoke(
               "search", {"path": str(work), "pattern": r"x = 1"}).content)
+
+    section("search reads the workspace, not the directories above it")
+    # Hidden files are skipped by where they sit inside the workspace. Judging
+    # the absolute path instead drags in every parent directory, so a checkout
+    # under any dotted path, a cache directory, ~/.local, a temp root with a
+    # dot in it, matched every file and answered "(no matches)" to every
+    # search in the run. It reported a clean tree rather than a broken tool,
+    # which is the failure worth having a check for.
+    tucked = tmp / ".hidden-parent" / "repo"
+    (tucked / "pkg").mkdir(parents=True)
+    (tucked / "pkg" / "money.py").write_text("total = round(0.1 + 0.2, 2)\n",
+                                             encoding="utf-8")
+    (tucked / ".secrets").mkdir()
+    (tucked / ".secrets" / "creds.py").write_text("total = 'shhh'\n",
+                                                  encoding="utf-8")
+    tucked_box = _Toolbox(tucked, review_policy(tucked),
+                          _Ledger(tmp / "tucked.jsonl"))
+    found = tucked_box.invoke("search", {"path": str(tucked), "pattern": "total"})
+    check("a workspace under a dotted directory still searches",
+          found.ok and "money.py" in found.content, found.content[:80])
+    check("and a hidden directory inside it stays skipped",
+          "creds.py" not in found.content)
+    listed = tucked_box.invoke("list_dir", {"path": str(tucked)})
+    check("list_dir agrees with search about what is hidden",
+          "money.py" in listed.content and "creds.py" not in listed.content)
 
     section("policy: failure is refusal")
     check("an argument that cannot be checked refuses rather than raises",

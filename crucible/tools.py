@@ -51,6 +51,23 @@ SUBPROCESS_ENV_KEEP = frozenset({
 SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASS", "_PASSWORD")
 
 
+def _is_hidden_within(entry: Path, root: Path) -> bool:
+    """Whether a path is hidden by its position inside the workspace.
+
+    Judged on the part of the path below the workspace root, so the
+    directories the workspace happens to live under stay out of it. A file
+    outside the root counts as hidden, since a caller asking about one has
+    already left the ground this answer covers.
+    """
+    try:
+        parts = entry.relative_to(root).parts
+    except ValueError:
+        return True
+    # An entry that IS the root has no parts below it, and search reaches here
+    # when it is pointed straight at one file. Its own name still decides.
+    return any(part.startswith(".") for part in (parts or (entry.name,)))
+
+
 def subprocess_env(parent: dict | None = None) -> dict:
     """The environment a tool's child process runs under.
 
@@ -282,7 +299,7 @@ class Toolbox:
             raise NotADirectoryError(f"{root} is not a directory")
         rows = []
         for entry in sorted(root.rglob("*")):
-            if any(part.startswith(".") for part in entry.relative_to(root).parts):
+            if _is_hidden_within(entry, root):
                 continue
             if entry.is_file():
                 rows.append(f"{entry.relative_to(root).as_posix()}  ({entry.stat().st_size} bytes)")
@@ -324,7 +341,13 @@ class Toolbox:
         for file in targets:
             if not file.is_file():
                 continue
-            if any(part.startswith(".") for part in file.parts):
+            # Hidden files are skipped by their position INSIDE the workspace.
+            # Judging the absolute path instead reads the directories above the
+            # workspace too, so a checkout living anywhere dotted, ~/.local, a
+            # cache directory, a temp root with a dot in it, matched every file
+            # and returned "(no matches)" for every search in the run. Silent,
+            # and it looked like a clean tree rather than a broken tool.
+            if _is_hidden_within(file, root):
                 continue
             try:
                 text = file.read_text(encoding="utf-8", errors="replace")

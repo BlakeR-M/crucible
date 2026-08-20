@@ -46,6 +46,14 @@ CODE_EXECUTION_FLAGS = {
 # `python -m X` runs module X, so the module needs an allowlist of its own.
 PERMITTED_MODULES = {"pytest", "unittest", "nose2", "green"}
 
+# The demo workspace carries the list of defects planted in it, because that
+# list is how a run gets scored afterwards. It sits inside the tree the
+# hunters read, so the boundary holds it back from them by name: a hunter that
+# reads the answers has found nothing, and a score built on that is worth
+# nothing. The refusal lands in the ledger like every other one, which is the
+# part that makes this checkable rather than promised.
+SCORING_FILES = (".answer_key.json",)
+
 
 def _as_list(value) -> list:
     """A list from whatever was recorded, refusing to iterate a bare string."""
@@ -77,12 +85,16 @@ class ToolRule:
 
     path_scopes  directories the tool may touch, inclusive of subdirectories.
                  An empty list means the tool takes no path argument.
+    denied_names filenames refused even when they sit inside a permitted
+                 scope, matched on the name alone. For carve-outs that are
+                 narrower than a directory.
     commands     permitted executable basenames, for the command runner only.
     url_hosts    permitted hostnames, for the fetch tool only.
     max_bytes    ceiling on a write, so a permitted tool cannot fill a disk.
     """
 
     path_scopes: list[Path] = field(default_factory=list)
+    denied_names: list[str] = field(default_factory=list)
     commands: list[str] = field(default_factory=list)
     url_hosts: list[str] = field(default_factory=list)
     max_bytes: int = 1_000_000
@@ -150,6 +162,14 @@ class Policy:
         if not rule.path_scopes:
             return Decision(False, f"'{tool}' takes no path argument", tool)
         target = Path(raw).expanduser().resolve()
+        # Checked before containment, so a denied name is refused wherever it
+        # is named rather than only inside the scope.
+        if target.name in rule.denied_names:
+            return Decision(
+                False,
+                f"'{target.name}' is held back from '{tool}' by this policy",
+                tool,
+            )
         for scope in rule.path_scopes:
             root = scope.resolve()
             if target == root or root in target.parents:
@@ -302,6 +322,8 @@ class Policy:
                 # that by definition may be malformed.
                 path_scopes=[Path(str(p))
                              for p in _as_list(rule.get("path_scopes"))],
+                denied_names=[str(n)
+                              for n in _as_list(rule.get("denied_names"))],
                 commands=_as_list(rule.get("commands")),
                 url_hosts=_as_list(rule.get("url_hosts")),
                 # `or` treats a recorded 0 as absent and hands back the 1 MB
@@ -324,6 +346,7 @@ class Policy:
             "tools": {
                 tool: {
                     "path_scopes": [str(p) for p in rule.path_scopes],
+                    "denied_names": rule.denied_names,
                     "commands": rule.commands,
                     "url_hosts": rule.url_hosts,
                     "max_bytes": rule.max_bytes,
@@ -349,9 +372,11 @@ def review_policy(workspace: Path, *, run_tests: bool = True) -> Policy:
     """
     workspace = workspace.resolve()
     rules = {
-        "read_file": ToolRule(path_scopes=[workspace]),
+        "read_file": ToolRule(path_scopes=[workspace],
+                              denied_names=list(SCORING_FILES)),
         "list_dir": ToolRule(path_scopes=[workspace]),
-        "search": ToolRule(path_scopes=[workspace]),
+        "search": ToolRule(path_scopes=[workspace],
+                           denied_names=list(SCORING_FILES)),
         "write_scratch": ToolRule(
             path_scopes=[workspace / ".crucible-scratch"], max_bytes=200_000
         ),
