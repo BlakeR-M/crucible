@@ -23,6 +23,7 @@ written against a class that had one hardcoded endpoint and now takes a base URL
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -34,7 +35,7 @@ from crucible import config as cfg  # noqa: E402
 from crucible.ledger import GENESIS, Ledger, _digest  # noqa: E402
 from crucible.policy import Policy, review_policy  # noqa: E402
 from crucible.providers import (  # noqa: E402
-    DEFAULT_BASE_URL, RATES, Budget, OpenAIProvider, Tier,
+    DEFAULT_BASE_URL, RATES, Budget, BudgetExceeded, OpenAIProvider, Tier,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -141,7 +142,7 @@ def config_checks(tmp: Path) -> None:
     nested = path.parent / "pkg" / "deep"
     nested.mkdir(parents=True)
     check("the nearest config is found by walking up",
-          cfg.find_config(nested) == path)
+          cfg.find_config(nested) == path.resolve())
     check("nothing is found where there is nothing",
           cfg.find_config(Path(tempfile.gettempdir()) / "crucible-absent") is None)
 
@@ -196,7 +197,7 @@ def provider_checks() -> None:
     try:
         metered_budget.guard("gpt-5", 1_000_000, 1_000_000)
         check("a metered budget still refuses what it cannot afford", False)
-    except Exception:
+    except BudgetExceeded:
         check("a metered budget still refuses what it cannot afford", True)
 
     try:
@@ -817,6 +818,43 @@ def regression_checks_two(tmp):
     check("and defaults to on", cfg.Config().require_complete is True)
 
 
+def offline_run_checks(tmp: Path) -> None:
+    """The exit-code contract, composed: a real `crucible run` as a subprocess,
+    on the stand-in provider, from clone to exit code. This is the keyless
+    demo the README offers, exercised the way a stranger runs it."""
+    section("run: offline end to end, exit codes composed")
+    env = dict(os.environ, CRUCIBLE_OFFLINE="1", CRUCIBLE_OFFLINE_PACE="0")
+    ledgers = tmp / "offline-runs"
+    out = subprocess.run(
+        [sys.executable, "-m", "crucible.cli", "run", "demo_target",
+         "--ledger-dir", str(ledgers), "--quiet"],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("an offline run on the demo target exits 1: findings survived",
+          out.returncode == 1, out.stdout[-300:] + out.stderr[-300:])
+    written = list(ledgers.glob("*.jsonl"))
+    check("and it left exactly one ledger, named after the run",
+          len(written) == 1 and not written[0].name.startswith(".pending"),
+          str(written))
+
+    verify = subprocess.run(
+        [sys.executable, "-m", "crucible.cli", "verify", str(written[0]),
+         "--workspace", str(ROOT / "demo_target")],
+        capture_output=True, text=True, cwd=str(ROOT))
+    check("the ledger it wrote verifies against the real workspace",
+          verify.returncode == 1 and "intact" in verify.stdout,
+          verify.stdout[-300:])
+
+    gate = tmp / "gate" / cfg.CONFIG_NAME
+    gate.parent.mkdir(parents=True)
+    gate.write_text('[gate]\nfail_on = "never"\n', encoding="utf-8")
+    out = subprocess.run(
+        [sys.executable, "-m", "crucible.cli", "run", "demo_target",
+         "--ledger-dir", str(ledgers), "--config", str(gate), "--quiet"],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    check("fail_on never turns the same survivors into exit 0",
+          out.returncode == 0, out.stdout[-300:] + out.stderr[-300:])
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -827,6 +865,7 @@ def main() -> None:
         cli_checks(tmp)
         regression_checks(tmp)
         regression_checks_two(tmp)
+        offline_run_checks(tmp)
     print(f"\n{PASSED} checks passed, {len(FAILED)} failed")
     if FAILED:
         for name in FAILED:

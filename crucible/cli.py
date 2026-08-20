@@ -47,6 +47,11 @@ EXIT_CLEAN = 0
 EXIT_SURVIVED = 1
 EXIT_FAILED = 2
 
+
+def _offline_enabled() -> bool:
+    from .offline import enabled
+    return enabled()
+
 # Caps for `crucible run <url>`. Wider than the server's, since this is
 # someone's own key and own machine, and still bounded, since a URL is a
 # stranger's tree until it has been measured.
@@ -308,10 +313,17 @@ def _run_in(workspace: Path, args, fetched: repo.CloneResult | None) -> int:
         return EXIT_FAILED
 
     config = _config_for(args)
-    provider = OpenAIProvider(
-        config.require_key(), config.models,
-        base_url=config.base_url, metered=config.metered,
-    )
+    if _offline_enabled():
+        # The same stand-in the web interface uses: the real orchestrator,
+        # policy, ledger and budget, with the model replies scripted locally.
+        # A fresh clone can run the whole arena with no key and no spend.
+        from .offline import OfflineProvider
+        provider = OfflineProvider()
+    else:
+        provider = OpenAIProvider(
+            config.require_key(), config.models,
+            base_url=config.base_url, metered=config.metered,
+        )
 
     # Under the working directory rather than beside the source. Installed with
     # pip, ROOT is inside site-packages, which is somewhere a tool has no
@@ -333,7 +345,8 @@ def _run_in(workspace: Path, args, fetched: repo.CloneResult | None) -> int:
         if fetched:
             print(f"  source    {fetched.url} @ {fetched.commit_sha}")
         print(f"  config    {config.source}")
-        print(f"  provider  {config.describe()}")
+        print(f"  provider  "
+              f"{'offline stand-in, spends nothing' if _offline_enabled() else config.describe()}")
         print(f"  ceiling   ${config.ceiling_usd:.2f}")
 
     budget = Budget(ceiling_usd=config.ceiling_usd,

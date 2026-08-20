@@ -23,6 +23,7 @@ never destroys anything would be showing the wrong thing.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 
@@ -210,7 +211,15 @@ class OfflineProvider:
 
     name = "offline"
 
-    def __init__(self, *, pace: float = STEP_SECONDS):
+    def __init__(self, *, pace: float | None = None):
+        # CRUCIBLE_OFFLINE_PACE=0 lets a test drive the whole arena at full
+        # speed; people watching a demo keep the default rhythm.
+        if pace is None:
+            raw = os.environ.get("CRUCIBLE_OFFLINE_PACE", "").strip()
+            try:
+                pace = max(0.0, float(raw)) if raw else STEP_SECONDS
+            except ValueError:
+                pace = STEP_SECONDS
         self.pace = pace
         self.calls = 0
         self._issued: dict[str, int] = {}
@@ -235,11 +244,14 @@ class OfflineProvider:
         if _wants(system, "you divide a code review"):
             return {"lanes": LANES}
         if _wants(system, "your lane is the boundary"):
+            # The shape PROBE_SYSTEM documents, so the stand-in follows the
+            # protocol it stands in for and agent_notes reaches the record.
             return {"done": True,
-                    "summary": "Every attempt was refused at the tool "
-                               "boundary, and the control read inside the "
-                               "workspace succeeded, so the limits are real "
-                               "rather than the tools being broken."}
+                    "got_through": [],
+                    "notes": "Every attempt was refused at the tool "
+                             "boundary, and the control read inside the "
+                             "workspace succeeded, so the limits are real "
+                             "rather than the tools being broken."}
         if _wants(system, "trying to refute"):
             return self._verdict(user)
         if _wants(system, "hunting for real defects"):
@@ -318,7 +330,5 @@ class OfflineProvider:
 
 def enabled() -> bool:
     """Whether this deployment should run without a paid model."""
-    import os
-
     return os.environ.get("CRUCIBLE_OFFLINE", "").strip().lower() in (
         "1", "true", "yes", "on")

@@ -322,24 +322,30 @@ def survival_checks(tmp: Path) -> None:
     section("failing safely")
     provider = RoleProvider(lanes=1, findings_per_lane=1,
                             verifier_returns_junk=True)
-    orchestrator, events, _ = build(tmp, provider, name="junk")
+    orchestrator, events, ledger = build(tmp, provider, name="junk")
     report = orchestrator.run("t")
     check("a verifier that never returns a verdict counts as a refutation",
           report.survived == 0)
-    check("and the finding was still raised and settled", report.raised == 1)
+    judged = [e for e in ledger.entries() if e["event"] == "finding_judged"]
+    check("and the finding was still raised and settled",
+          report.raised == 1 and len(judged) == 1)
 
     provider = RoleProvider(lanes=2, findings_per_lane=1, verdicts=[False] * 6)
     orchestrator, events, ledger = build(tmp, provider, ceiling=0.0004, name="broke")
     report = orchestrator.run("t")
     check("a run that hits its ceiling still returns a report",
           isinstance(report.raised, int))
-    check("and says it was halted",
-          bool(report.halted) or report.raised == 0)
+    check("and says it was halted", bool(report.halted))
     check("and the ledger it wrote still verifies", ledger.verify() is None)
 
 
 def policy_checks(tmp: Path) -> None:
     section("policy inside a run")
+
+    # An absolute path on every platform, outside the workspace, and real, so
+    # the refusal is about the boundary rather than a missing file.
+    outside = tmp / "escape-target.txt"
+    outside.write_text("the file the hunter tries to reach", encoding="utf-8")
 
     class Escaper(RoleProvider):
         """A hunter that tries to leave the workspace on its first move."""
@@ -347,7 +353,7 @@ def policy_checks(tmp: Path) -> None:
         def complete(self, system, user, tier, budget, **kw):
             if tier is Tier.WORKER and ">>> you called" not in user:
                 text = json.dumps(
-                    {"tool": "read_file", "args": {"path": "C:/Windows/win.ini"}}
+                    {"tool": "read_file", "args": {"path": str(outside)}}
                 )
                 budget.record("gpt-5-mini", 10, 10)
                 return Completion(text, "role", 10, 10, 0.0, 0.0)
@@ -358,7 +364,12 @@ def policy_checks(tmp: Path) -> None:
     orchestrator.run("t")
 
     refusals = [e for e in events if e["kind"] == "tool" and e.get("refused")]
-    check("an attempt to read outside the workspace is refused", len(refusals) >= 1)
+    denied = [e for e in ledger.entries() if e["event"] == "tool_denied"]
+    # Pinned to the hunter's specific target: the boundary probe writes its own
+    # refusals to the same chain, so counting any refusal proves nothing about
+    # this one.
+    check("an attempt to read outside the workspace is refused",
+          any("escape-target" in json.dumps(e["payload"]) for e in denied))
     check("a relative path anchors to the workspace instead of the server's cwd",
           bool(Toolbox(tmp / "ws", review_policy(tmp / "ws"),
                        Ledger(tmp / "rel.jsonl")).invoke(
@@ -369,14 +380,9 @@ def policy_checks(tmp: Path) -> None:
               "read_file", {"path": "../../../Windows/win.ini"}).refused)
     check("the refusal reached the stream with a reason",
           bool(refusals and refusals[0].get("reason")))
-    denied = [e for e in ledger.entries() if e["event"] == "tool_denied"]
     check("and was written to the ledger", len(denied) >= 1)
-    # Across every refusal rather than the first one. The boundary probe runs
-    # alongside the hunt and writes its own refusals to the same chain, so which
-    # refusal lands first is a matter of thread timing and never was the thing
-    # this check was about.
     check("the ledger's refusal names the path that was blocked",
-          any("win.ini" in json.dumps(e["payload"]) for e in denied))
+          any("escape-target" in json.dumps(e["payload"]) for e in denied))
     check("the agent kept working after being refused",
           any(e["kind"] == "agent_done" for e in events))
 
