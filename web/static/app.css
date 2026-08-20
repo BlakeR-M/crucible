@@ -70,7 +70,9 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
   padding: 0 20px;
 }
 .head .wm { font-family: var(--face-display); font-style: italic;
-            font-size: var(--t-title); }
+            font-size: var(--t-title); color: var(--ink);
+            text-decoration: none; }
+.head .wm:hover { text-decoration: underline; text-underline-offset: 3px; }
 /* Named thesis rather than claim: a finding is a .claim, and reusing the word
    in the masthead put finding styling on the tagline and made every element
    count disagree with the numbers beside it. */
@@ -84,7 +86,7 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 
 /* --------------------------------------------------------------- the work */
 
-.work { min-height: 0; display: grid; grid-template-rows: auto auto 1fr auto;
+.work { min-height: 0; display: grid; grid-template-rows: auto auto 1fr auto auto;
         width: 100%; max-width: 1060px; }
 
 /* The step-by-step walkthrough, driven by the run's own events. */
@@ -193,7 +195,7 @@ body.landing .stage { display: flex; padding: 28px 24px; }
 /* ------------------------------------------------------------- the thread */
 
 .node { position: relative; }
-.node > .kids {
+.node > .kids, .node > .attacks > .kids {
   margin-left: 12px; padding-left: 20px;
   border-left: 1px solid var(--rule-hair);
 }
@@ -261,6 +263,12 @@ body.landing .stage { display: flex; padding: 28px 24px; }
 .ruling.out .w { color: var(--rubric); }
 .ruling .c { font-size: var(--t-marg); color: var(--ink-faint); }
 
+/* The three verifier write-ups, folded behind the ruling. */
+.attacks { margin: 0 0 6px 16px; }
+.attacks > summary { cursor: pointer; font-size: var(--t-marg);
+                     color: var(--ink-faint); width: fit-content; }
+.attacks > summary:hover, .attacks[open] > summary { color: var(--ink); }
+
 /* --------------------------------------------------------------- closing */
 
 .closing { margin-top: 26px; padding: 16px 18px; background: var(--paper-leaf);
@@ -301,7 +309,7 @@ body.landing .stage { display: flex; padding: 28px 24px; }
   .stage { overflow: visible; }
   .score { flex-wrap: wrap; gap: 14px; }
   .score .n b { font-size: var(--t-title); }
-  .ticker { position: sticky; bottom: 0; }
+  .ticker, .after { position: sticky; bottom: 0; }
 }
 @media (max-width: 620px) {
   :root { --t-huge: 1.75rem; --t-body: 1rem; --t-sub: .875rem; }
@@ -371,10 +379,19 @@ body.landing .stage { display: flex; padding: 28px 24px; }
                color: var(--ink); text-decoration: underline;
                text-underline-offset: 2px; }
 .verify-here:disabled, .linkish:disabled { color: var(--ink-faint); cursor: default; }
-.closing .again { margin-top: 12px; padding-top: 10px;
-                  border-top: 1px solid var(--rule-hair);
-                  font-size: var(--t-marg); color: var(--ink-faint); }
-.closing .again a { font-size: var(--t-marg); }
+
+/* The finish bar: when a run ends, the ticker's row becomes the way
+ * forward, pinned where nobody can miss it. */
+.after {
+  border-top: 2px solid var(--ink); background: var(--paper-leaf);
+  min-height: 46px; display: flex; align-items: center; gap: 16px;
+  padding: 8px 24px; font-size: var(--t-sub); flex-wrap: wrap;
+}
+.after[hidden] { display: none; }
+.after .acts { margin-left: auto; display: flex; gap: 20px;
+               align-items: baseline; flex-wrap: wrap; }
+.after .linkish, .after a { font-size: var(--t-sub); }
+body.landing .after { display: none; }
 .verify-out { margin-top: 6px; font-size: var(--t-marg);
               color: var(--ink-muted);
               font-variant-numeric: tabular-nums lining-nums; }

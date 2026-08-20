@@ -21,7 +21,7 @@
 
 <header class="head">
   <div class="in">
-    <span class="wm">Crucible</span>
+    <a class="wm" id="home" href="/">Crucible</a>
     <span class="thesis">AI finds bugs. Most of them are wrong. This proves which ones aren&rsquo;t.</span>
     <span class="id mono" id="runid"></span>
     <a class="hlink" id="about-open" href="#">what is this</a>
@@ -88,8 +88,8 @@
            lands in a hash-chained ledger you can verify in this browser.</p>
         <div class="hero-acts">
           <button type="button" id="demo-go">See how it works</button>
-          <span class="hero-note">a real review of the bundled codebase,
-                narrated step by step</span>
+          <span class="hero-note">a real review of a small booking app seeded
+                with bugs and traps, narrated step by step</span>
         </div>
         <p class="proof">One recorded run with live models raised 16 findings
            and proved 9 of them, for 27 US cents.
@@ -144,6 +144,15 @@
         <span class="fig" id="tick-calls">0 calls</span>
         <span class="fig" id="tick-reads">0 reads</span>
         <span class="fig" id="tick-clock">0:00</span>
+      </span>
+    </div>
+
+    <div class="after" id="after" hidden>
+      <span id="after-sum"></span>
+      <span class="acts">
+        <button type="button" class="linkish" id="after-repo">Try it on a repo of yours</button>
+        <button type="button" class="linkish" id="after-again">Run the demo again</button>
+        <a href="https://github.com/BlakeR-M/crucible">Get the code</a>
       </span>
     </div>
 

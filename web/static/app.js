@@ -115,6 +115,9 @@ function attach(runId) {
   // Close the previous run's stream before opening another, or the old one
   // keeps pushing events into a board that now belongs to a different run.
   if (S.source) { try { S.source.close(); } catch { /* already gone */ } }
+  // A run gets its own history entry, so the back button returns to the
+  // landing the way it would anywhere else on the web.
+  try { history.pushState({ run: runId }, ''); } catch { /* file: etc. */ }
   reset(runId);
   const source = new EventSource('/api/stream/' + runId);
   S.source = source;
@@ -142,6 +145,7 @@ function reset(runId) {
   $('tick-spend').textContent = '$0.0000'; $('tick-calls').textContent = '0 calls';
   $('tick-reads').textContent = '0 reads'; $('tick-dag').textContent = '';
   $('tick-clock').textContent = '0:00';
+  $('ticker').hidden = false; $('after').hidden = true;
   $('runid').textContent = runId.slice(0, 8);
   clearInterval(S.timer); S.timer = setInterval(clock, 1000);
 }
@@ -154,6 +158,7 @@ function showLanding(focusRepo) {
   $('narrate').hidden = true;
   $('thread').innerHTML = ''; $('closing').innerHTML = '';
   $('runid').textContent = '';
+  $('ticker').hidden = false; $('after').hidden = true;
   $('idle').style.display = '';
   document.body.classList.add('landing');
   $('stage').scrollTop = 0; window.scrollTo(0, 0);
@@ -218,6 +223,9 @@ function onStart(e) {
   }
   if (e.repo_url) {
     root.acts.append(mkAct('source', e.repo_url + (e.commit_sha ? ' @ ' + String(e.commit_sha).slice(0, 12) : '')));
+  } else {
+    root.acts.append(mkAct('target', 'the bundled demo: a small booking system ' +
+      'seeded with real defects and believable traps'));
   }
   S.agents.set('__planner', root);
   $('state').textContent = 'running';
@@ -342,10 +350,16 @@ function onRaised(e) {
                                 '  ' + (e.severity || 'medium')));
   box.append(el('p', 'sum', e.summary || ''));
   const acts = el('div', 'acts');
+  // The three attacks fold away behind the ruling: the verdict reads at a
+  // glance, and the full reasoning stays one click deep for whoever wants
+  // the receipts.
+  const attacks = el('details', 'attacks');
+  attacks.append(el('summary', null, 'read the three attacks'));
   const kids = el('div', 'kids');
+  attacks.append(kids);
   const ruling = el('div', 'ruling');
   ruling.append(el('span', 'w', 'being attacked'), el('span', 'c', 'three fact-checkers'));
-  wrap.append(box, acts, kids, ruling);
+  wrap.append(box, acts, ruling, attacks);
   (laneHost(e.lane) || S.agents.get('__planner')).kids.append(wrap);
   S.claims.set(e.id, { wrap, box, kids, acts, ruling, seen: 0, data: e });
 }
@@ -452,19 +466,16 @@ function onFinished(e) {
   });
   box.append(link, vout);
 
-  const again = el('p', 'again');
-  const rerun = el('button', 'linkish', 'Run it again');
-  rerun.type = 'button';
-  rerun.addEventListener('click', () => startDemo(rerun));
-  const toRepo = el('button', 'linkish', 'review a repository');
-  toRepo.type = 'button';
-  toRepo.addEventListener('click', () => showLanding(true));
-  const code = el('a', null, 'take the code');
-  code.href = 'https://github.com/BlakeR-M/crucible';
-  again.append(rerun, el('span', null, ' · '), toRepo, el('span', null, ' · '), code);
-  box.append(again);
-
   $('closing').append(box);
+
+  // The finished run stops claiming this browser's reloads, and the ticker
+  // hands its row to the way forward.
+  try { localStorage.removeItem('crucible-own-run'); } catch { /* fine */ }
+  $('after-sum').textContent =
+    `Run complete: ${say(e.survived)} proven, ${say(killed)} thrown away.`;
+  $('ticker').hidden = true;
+  $('after').hidden = false;
+
   if (BYO.attached) byoRefresh();
 }
 
@@ -676,6 +687,16 @@ $('repo').addEventListener('submit', async (e) => {
     $('repo-go').disabled = false;
   }
 });
+
+/* ------------------------------------------------------------- way back */
+
+$('home').addEventListener('click', (e) => {
+  e.preventDefault();
+  if (S.runId) showLanding();
+});
+$('after-repo').addEventListener('click', () => showLanding(true));
+$('after-again').addEventListener('click', () => startDemo($('after-again')));
+window.addEventListener('popstate', () => { if (S.runId) showLanding(); });
 
 /* Limits first, so findRun knows whether this deployment is open to
  * everyone before it decides whose run is worth resuming. */
