@@ -85,12 +85,26 @@ function drainNarrate() {
   setTimeout(drainNarrate, NAR_HOLD_MS);
 }
 
+/* On an open deployment the server's newest run belongs to whoever started
+ * it, so a fresh visitor is never attached to a stranger's run: the page
+ * only resumes a run this browser began. A private deployment keeps the old
+ * behaviour, where the operator wants whatever the server is doing. */
+function ownRun() {
+  try { return localStorage.getItem('crucible-own-run'); } catch { return null; }
+}
+
+function rememberRun(runId) {
+  try { localStorage.setItem('crucible-own-run', runId); } catch { /* fine */ }
+}
+
 async function findRun() {
   try {
     const r = await fetch('/api/runs/current');
     if (!r.ok) return;
     const d = await r.json();
-    if (d.run_id && d.run_id !== S.runId) attach(d.run_id);
+    if (!d.run_id || d.run_id === S.runId) return;
+    if (S.public !== false && d.run_id !== ownRun()) return;
+    attach(d.run_id);
   } catch { /* nothing running is a normal answer */ }
 }
 
@@ -121,11 +135,29 @@ function reset(runId) {
   S.agents.clear(); S.claims.clear();
   S.found = S.keep = S.out = S.refused = S.calls = S.reads = 0; S.spend = 0;
   S.narStep = 0; S.narQueue = []; $('narrate').hidden = true;
+  document.body.classList.remove('landing');
   $('idle').style.display = 'none';
   $('thread').innerHTML = ''; $('closing').innerHTML = '';
   ['s-found', 's-out', 's-keep'].forEach(id => $(id).textContent = '0');
+  $('tick-spend').textContent = '$0.0000'; $('tick-calls').textContent = '0 calls';
+  $('tick-reads').textContent = '0 reads'; $('tick-dag').textContent = '';
+  $('tick-clock').textContent = '0:00';
   $('runid').textContent = runId.slice(0, 8);
   clearInterval(S.timer); S.timer = setInterval(clock, 1000);
+}
+
+/* The way back: clear the board and put the landing up again. */
+function showLanding(focusRepo) {
+  if (S.source) { try { S.source.close(); } catch { /* already gone */ } }
+  clearInterval(S.timer);
+  S.runId = null; S.started = 0; S.narStep = 0; S.narQueue = [];
+  $('narrate').hidden = true;
+  $('thread').innerHTML = ''; $('closing').innerHTML = '';
+  $('runid').textContent = '';
+  $('idle').style.display = '';
+  document.body.classList.add('landing');
+  $('stage').scrollTop = 0; window.scrollTo(0, 0);
+  if (focusRepo) $('repo-url').focus();
 }
 
 function handle(e) {
@@ -420,6 +452,18 @@ function onFinished(e) {
   });
   box.append(link, vout);
 
+  const again = el('p', 'again');
+  const rerun = el('button', 'linkish', 'Run it again');
+  rerun.type = 'button';
+  rerun.addEventListener('click', () => startDemo(rerun));
+  const toRepo = el('button', 'linkish', 'review a repository');
+  toRepo.type = 'button';
+  toRepo.addEventListener('click', () => showLanding(true));
+  const code = el('a', null, 'take the code');
+  code.href = 'https://github.com/BlakeR-M/crucible';
+  again.append(rerun, el('span', null, ' · '), toRepo, el('span', null, ' · '), code);
+  box.append(again);
+
   $('closing').append(box);
   if (BYO.attached) byoRefresh();
 }
@@ -484,12 +528,13 @@ async function repoLimits() {
     hint(`Public repositories on ${hosts}, up to ${d.repo_max_mb} MB and ` +
          `${d.repo_max_files} files, one commit deep. Add @branch, @tag or @commit to pick a ref.`);
     S.offline = !!d.offline;
+    S.public = !!d.public;
     if (d.offline) {
       const note = document.createElement('p');
       note.className = 'notice';
       note.id = 'offline-notice';
-      const idle = $('idle');
-      if (idle && !$('offline-notice')) idle.insertBefore(note, idle.firstChild);
+      const slot = $('notice-slot');
+      if (slot && !$('offline-notice')) slot.append(note);
     }
     if (d.public) {
       // An open deployment has nothing to sign out of.
@@ -507,10 +552,11 @@ const BYO = { enabled: false, ceiling: 1, max: 5, attached: false };
 function offlineNotice() {
   const note = $('offline-notice');
   if (!note) return;
-  note.textContent = 'This deployment runs the full arena with a stand-in model: the planner, hunters, ' +
-    'verifiers, policy and ledger are real and every completion is scripted, so no findings here ' +
-    'come from a live model. Live model runs switch on when the operator supplies a provider key' +
-    (BYO.enabled && !BYO.attached ? ', or attach your own key below to run against a live model.' : '.');
+  note.textContent = 'This deployment runs a stand-in model: the planner, hunters, verifiers, ' +
+    'policy and ledger are all real, and the completions are scripted.' +
+    (BYO.enabled && !BYO.attached
+      ? ' Attach your own key below and it reviews with a live model.'
+      : ' Live model runs switch on when the operator supplies a provider key.');
 }
 
 function byoHint(text, said) {
@@ -524,7 +570,8 @@ function byoRender(d) {
   BYO.ceiling = d.run_ceiling_usd || BYO.ceiling;
   BYO.max = d.run_ceiling_max_usd || BYO.max;
   BYO.attached = !!d.attached;
-  $('byo').hidden = !BYO.enabled;
+  $('byo-wrap').hidden = !BYO.enabled;
+  if (BYO.attached) $('byo-wrap').open = true;
   $('byo-form').hidden = BYO.attached;
   $('byo-held').hidden = !BYO.attached;
   if (BYO.attached) {
@@ -583,8 +630,8 @@ $('byo-forget').addEventListener('click', async () => {
   }
 });
 
-$('demo-go').addEventListener('click', async () => {
-  $('demo-go').disabled = true;
+async function startDemo(btn) {
+  if (btn) btn.disabled = true;
   try {
     const r = await fetch('/api/run', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -592,13 +639,16 @@ $('demo-go').addEventListener('click', async () => {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { hint(d.error || 'The arena declined that one. Try again in a moment.', true); return; }
+    rememberRun(d.run_id);
     attach(d.run_id);
   } catch {
     hint('The server is out of reach just now. Try again in a moment.', true);
   } finally {
-    $('demo-go').disabled = false;
+    if (btn) btn.disabled = false;
   }
-});
+}
+
+$('demo-go').addEventListener('click', () => startDemo($('demo-go')));
 
 $('repo').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -618,6 +668,7 @@ $('repo').addEventListener('submit', async (e) => {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { hint(d.error || 'The arena declined that one. Try again in a moment.', true); return; }
     hint('');
+    rememberRun(d.run_id);
     attach(d.run_id);
   } catch {
     hint('The server is out of reach just now. Try again in a moment.', true);
@@ -626,5 +677,6 @@ $('repo').addEventListener('submit', async (e) => {
   }
 });
 
-findRun();
-repoLimits();
+/* Limits first, so findRun knows whether this deployment is open to
+ * everyone before it decides whose run is worth resuming. */
+repoLimits().then(findRun);

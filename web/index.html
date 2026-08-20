@@ -17,7 +17,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23FBFAF7'/><path d='M2.5 8.2 L13.5 8.2' stroke='%238C1515' stroke-width='1.4'/></svg>">
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body>
+<body class="landing">
 
 <header class="head">
   <div class="in">
@@ -51,7 +51,7 @@
     standard-library Python, and it runs on your machine too:</p>
     <p class="intro-repo"><a href="https://github.com/BlakeR-M/crucible">github.com/BlakeR-M/crucible</a></p>
     <div class="intro-actions">
-      <button id="intro-go" type="button">Open the tool</button>
+      <button id="intro-go" type="button">Back to the tool</button>
     </div>
   </div>
 </div>
@@ -77,14 +77,27 @@
 
     <div class="stage" id="stage">
       <div class="idle" id="idle">
-        <p><b>Nothing has run yet in this session.</b></p>
-        <div class="demo-run">
+        <p class="kicker">An adversarial code review arena &middot; MIT &middot; Python, standard library only</p>
+        <h1 class="hero-h">AI finds bugs.<br>
+          <span class="wrong">Most of them are wrong.</span><br>
+          <em>This proves which ones aren&rsquo;t.</em></h1>
+        <p class="lede">Point Crucible at a codebase and bug hunters spread out
+           through it, blind to each other. Every finding they raise is handed
+           to three verifiers told to tear it down, and uncertainty counts as
+           refutation. What survives carries a reproduction, and the whole run
+           lands in a hash-chained ledger you can verify in this browser.</p>
+        <div class="hero-acts">
           <button type="button" id="demo-go">See how it works</button>
-          <p class="hint">A real review of the bundled demo codebase, narrated
-             step by step: the hunt, the kills, and what survives.</p>
+          <span class="hero-note">a real review of the bundled codebase,
+                narrated step by step</span>
         </div>
+        <p class="proof">One recorded run with live models raised 16 findings
+           and proved 9 of them, for 27 US cents.
+           <a href="https://github.com/BlakeR-M/crucible/tree/main/docs/evidence">That
+           ledger is in the repo</a>, and one command replays every decision in it.</p>
+        <div id="notice-slot"></div>
         <form class="repo" id="repo" autocomplete="off">
-          <label for="repo-url">Review a public repository</label>
+          <label for="repo-url">Or point it at a public repository</label>
           <div class="row">
             <input id="repo-url" type="text" inputmode="url" spellcheck="false"
                    placeholder="https://github.com/org/repo@main">
@@ -92,28 +105,32 @@
           </div>
           <p class="hint" id="repo-hint"></p>
         </form>
-        <form class="byo" id="byo" autocomplete="off">
-          <label for="byo-key">Bring your own key</label>
-          <p class="hint">Run the arena against a live model on your own account. The key stays in
-             this server&rsquo;s memory for this session only: it is dropped when you forget it or the
-             session expires, and it is written to nothing.</p>
-          <div class="row" id="byo-form">
-            <select id="byo-provider" aria-label="Provider">
-              <option value="openai">OpenAI</option>
-              <option value="gemini">Gemini</option>
-            </select>
-            <input id="byo-key" type="password" autocomplete="off" spellcheck="false"
-                   placeholder="API key">
-            <input id="byo-ceiling" type="number" inputmode="decimal" min="0.01" step="0.05"
-                   placeholder="$ per run" aria-label="Ceiling per run in dollars">
-            <button type="submit" id="byo-go">Attach</button>
-          </div>
-          <div class="row" id="byo-held" hidden>
-            <span class="status" id="byo-status"></span>
-            <button type="button" id="byo-forget">Forget key</button>
-          </div>
-          <p class="hint" id="byo-hint"></p>
-        </form>
+        <details class="byo-wrap" id="byo-wrap">
+          <summary>Attach your own key to run against a live model</summary>
+          <form class="byo" id="byo" autocomplete="off">
+            <p class="hint">The key stays in this server&rsquo;s memory for this
+               session only: it is dropped when you forget it or the session
+               expires, and it is written to nothing.</p>
+            <div class="row" id="byo-form">
+              <select id="byo-provider" aria-label="Provider">
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Gemini</option>
+              </select>
+              <input id="byo-key" type="password" autocomplete="off" spellcheck="false"
+                     placeholder="API key">
+              <input id="byo-ceiling" type="number" inputmode="decimal" min="0.01" step="0.05"
+                     placeholder="$ per run" aria-label="Ceiling per run in dollars">
+              <button type="submit" id="byo-go">Attach</button>
+            </div>
+            <div class="row" id="byo-held" hidden>
+              <span class="status" id="byo-status"></span>
+              <button type="button" id="byo-forget">Forget key</button>
+            </div>
+            <p class="hint" id="byo-hint"></p>
+          </form>
+        </details>
+        <p class="take">Run it on your own machine:
+           <a class="mono" href="https://github.com/BlakeR-M/crucible">github.com/BlakeR-M/crucible</a></p>
       </div>
       <div id="thread"></div>
       <div id="closing"></div>
@@ -136,12 +153,11 @@
 <script src="/static/app.js"></script>
 <script>
 (function () {
+  // The landing carries the pitch now, so the info page waits to be asked
+  // for instead of opening itself over a first visit.
   var intro = document.getElementById('intro');
   function open() { intro.hidden = false; }
-  function close() {
-    intro.hidden = true;
-    try { localStorage.setItem('crucible-intro-seen', '1'); } catch (e) {}
-  }
+  function close() { intro.hidden = true; }
   document.getElementById('intro-go').addEventListener('click', close);
   intro.addEventListener('click', function (e) { if (e.target === intro) close(); });
   document.addEventListener('keydown', function (e) {
@@ -150,9 +166,6 @@
   document.getElementById('about-open').addEventListener('click', function (e) {
     e.preventDefault(); open();
   });
-  var seen = null;
-  try { seen = localStorage.getItem('crucible-intro-seen'); } catch (e) {}
-  if (seen !== '1') open();
 })();
 </script>
 </body>
