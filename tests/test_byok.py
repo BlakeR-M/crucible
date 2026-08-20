@@ -254,6 +254,24 @@ def validation_checks() -> None:
     check("two hundred stand-in calls stay clear of a 60 cent ceiling",
           tight.spent_usd == 0.0, f"spent {tight.spent_usd}")
 
+    # Declaring a run unmetered prices every call at zero, so BudgetExceeded
+    # can never fire and the ceiling is off completely. Every vendor the arena
+    # ships a base URL for has to be refused that declaration. The guard used
+    # to carry its own hand-written host list, and the first vendor added
+    # after it was written went missing from it.
+    from crucible.providers import OpenAIProvider as _Provider
+
+    unguarded = []
+    for name, spec in byok.PROVIDERS.items():
+        try:
+            _Provider("k" * 20, dict(spec["defaults"]),
+                      base_url=spec["base_url"], metered=False)
+            unguarded.append(name)
+        except ValueError:
+            pass
+    check("no vendor on the shelf can be declared unmetered",
+          not unguarded, str(unguarded))
+
     held = server.KEYS.get(sid)
     check("the table holds the key in memory with the session's expiry",
           held is not None and held["key"] == GOOD_KEY
@@ -298,6 +316,12 @@ def run_checks(tmp: Path) -> None:
           finished.get("run_id") == body["run_id"], str(finished.get("run_id")))
     check("and the ledger file sits under that name",
           (server.RUNS / f"{body['run_id']}.jsonl").is_file())
+    # Bound to what a whole run actually reported, rather than to the price of
+    # a hardcoded model name. The stand-in reaches no vendor, so a free run
+    # that books anything means the model name it settles under has drifted
+    # away from the free list and is being charged the table maximum again.
+    check("a stand-in run spends nothing, end to end",
+          finished["spend_usd"] == 0.0, str(finished["spend_usd"]))
 
     section("run: with a key, the visitor's provider")
     status, body = server.admit_key({"provider": "gemini", "api_key": GOOD_KEY}, sid, cookie)

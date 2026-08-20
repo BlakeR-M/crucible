@@ -112,17 +112,17 @@
             <span><b>9</b> proven</span>
           </div>
           <div class="still-claim">
-            <span class="st">Idempotency key omits the time of day</span>
-            <span class="wh">bookings/api.py:69 &nbsp; high</span>
-            <span class="ru">Proven &nbsp;<i>3 of 3 could not disprove it</i></span>
+            <span class="st">Overlap check treats abutting slots as conflicting</span>
+            <span class="ru">Proven &nbsp;<i>2 of 3 could not disprove it</i></span>
           </div>
           <div class="still-claim dead">
-            <span class="st">Tax applied before the discount on cancelled bookings</span>
-            <span class="wh">bookings/invoicing.py:118 &nbsp; medium</span>
-            <span class="ru">Disproved &nbsp;<i>compute_tax reads taxable, not subtotal</i></span>
+            <span class="st">Global idempotency map is not tenant-scoped</span>
+            <span class="ru">Disproved &nbsp;<i>2 of 3 knocked it down</i></span>
           </div>
-          <figcaption id="still-cap">The recorded run, as the page shows it.
-            The struck line is a finding the verifiers took apart.</figcaption>
+          <figcaption id="still-cap">Two findings from that run, copied out of
+            <a href="https://github.com/BlakeR-M/crucible/tree/main/docs/evidence">its
+            published ledger</a> with the votes they got. The struck line is one
+            the verifiers took apart.</figcaption>
         </figure>
         <div id="notice-slot"></div>
         <form class="repo" id="repo" autocomplete="off">

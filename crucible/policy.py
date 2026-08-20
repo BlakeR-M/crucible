@@ -55,6 +55,18 @@ PERMITTED_MODULES = {"pytest", "unittest", "nose2", "green"}
 SCORING_FILES = (".answer_key.json",)
 
 
+def _scratch_scope(workspace: Path) -> Path:
+    """The scratch directory, named here without importing tools.
+
+    tools imports policy, so policy cannot import tools back. The shape is
+    asserted against tools.scratch_dir by a check, which is what keeps the two
+    from drifting apart into a policy that scopes one directory while the
+    toolbox writes to another.
+    """
+    workspace = Path(workspace).resolve()
+    return workspace.parent / (workspace.name + ".crucible-scratch")
+
+
 def _as_list(value) -> list:
     """A list from whatever was recorded, refusing to iterate a bare string."""
     if value is None:
@@ -377,8 +389,12 @@ def review_policy(workspace: Path, *, run_tests: bool = True) -> Policy:
         "list_dir": ToolRule(path_scopes=[workspace]),
         "search": ToolRule(path_scopes=[workspace],
                            denied_names=list(SCORING_FILES)),
+        # Beside the checkout rather than inside it. Scratch within the tree
+        # that run_tests executes meant an agent could write a script and run
+        # it, which returns every capability this policy takes away. See
+        # tools.scratch_dir.
         "write_scratch": ToolRule(
-            path_scopes=[workspace / ".crucible-scratch"], max_bytes=200_000
+            path_scopes=[_scratch_scope(workspace)], max_bytes=200_000
         ),
     }
     if run_tests:

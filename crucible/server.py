@@ -526,7 +526,16 @@ def start_run(task_key: str, repo_url: str | None = None,
         return None, (f"the daily ceiling of ${DAILY_CEILING_USD:.2f} is spent. "
                       f"It resets at midnight UTC. Attach a key of your own "
                       f"to run against a live model now.")
-    ceiling = byo_ceiling(ceiling_usd) if visitor else RUN_CEILING_USD
+    # The ceiling a visitor chose when attaching their key, since the run
+    # request carries no figure of its own. Without this fallback the stored
+    # number was shown back to them and then quietly replaced by the
+    # deployment default: someone asking for a one cent ceiling got a dollar,
+    # on their own key, while the page told them otherwise.
+    if visitor:
+        wanted = ceiling_usd if ceiling_usd not in (None, "") else visitor.get("ceiling_usd")
+        ceiling = byo_ceiling(wanted)
+    else:
+        ceiling = RUN_CEILING_USD
 
     def finish(reason: str, spent: float = 0.0) -> None:
         """Close a run out so nothing is left hanging.
@@ -831,17 +840,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"run_id": REGISTRY.newest()})
             return
 
-        if path == "/api/chat/opening":
-            from .chat import ChatAgent  # noqa: F401  (imported for its module)
-
-            agent = CHATS.get(self._sid())
-            self._json(200, {
-                "opening": agent.opening(),
-                "ceiling_usd": CHAT_CEILING_USD,
-                "spent_usd": round(agent.budget.spent_usd, 5),
-            })
-            return
-
         if path == "/api/tasks":
             self._json(200, {"tasks": [{"key": k, "label": v}
                                        for k, v in TASKS.items()],
@@ -920,24 +918,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json(401, {"error": "not signed in"})
             return
 
-        if route.path == "/api/chat":
-            try:
-                payload = json.loads(raw.decode("utf-8")) if raw else {}
-            except json.JSONDecodeError:
-                self._json(400, {"error": "bad json"})
-                return
-            message = str(payload.get("message", "")).strip()
-            if not message:
-                self._json(400, {"error": "say something"})
-                return
-            # Bounded before it reaches a model. A visitor pasting a novel is
-            # an unbounded prompt on somebody else's key.
-            if len(message) > 2000:
-                self._json(413, {"error": "that message is too long"})
-                return
-            self._chat(self._sid(), message)
-            return
-
         if route.path == "/api/run":
             try:
                 payload = json.loads(raw.decode("utf-8")) if raw else {}
@@ -1006,54 +986,6 @@ class Handler(BaseHTTPRequestHandler):
         that somehow arrives without the random one still gets a conversation
         rather than an error, and a fresh string rather than a shared one."""
         return self._cookie("crucible_sid") or f"anon-{secrets.token_urlsafe(12)}"
-
-    def _chat(self, sid: str, message: str) -> None:
-        """One conversational turn, streamed as it happens.
-
-        The agent's tool calls and refusals reach the browser while it is still
-        thinking, which is most of the point: a visitor watching it decide to
-        go and read the run is watching the thing work, not waiting on a
-        spinner.
-        """
-        agent = CHATS.get(sid)
-        kind = CHATS.kind(sid)
-        redact = redactor_for(agent.provider)
-        CHATS.reap()
-        KEYS.reap()
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache, no-transform")
-        self.send_header("X-Accel-Buffering", "no")
-        self.send_header("Connection", "close")
-        self.close_connection = True
-        self.end_headers()
-
-        def push(event: dict) -> bool:
-            try:
-                event = redact.scrub_value(event)
-                self.wfile.write(f"data: {json.dumps(event)}\n\n".encode("utf-8"))
-                self.wfile.flush()
-                return True
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                return False
-
-        spent_before = agent.budget.spent_usd
-        try:
-            for event in agent.stream(message):
-                if not push(event):
-                    return
-        except Exception as exc:  # noqa: BLE001 - the visitor must be told
-            push({"kind": "chat_error",
-                  "text": redact.scrub(f"{type(exc).__name__}: {exc}")[:300]})
-        finally:
-            if kind == "visitor":
-                KEYS.add_spend(sid, agent.budget.spent_usd - spent_before)
-            push({"kind": "chat_done",
-                  "spent_usd": round(agent.budget.spent_usd, 5),
-                  "ceiling_usd": CHAT_CEILING_USD,
-                  "provider_kind": kind,
-                  "session_spend_usd": KEYS.status(sid).get("spent_usd", 0.0)})
 
     def _stream(self, run_id: str) -> None:
         subscription = REGISTRY.subscribe(run_id)

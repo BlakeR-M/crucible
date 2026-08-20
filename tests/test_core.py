@@ -80,6 +80,33 @@ def policy_checks(tmp: Path) -> None:
     check("a tool with no path scope refuses a path outright",
           not Policy("p", {"ping": ToolRule()}).check("ping", {"path": str(work)}))
 
+    section("policy: an allowlisted binary cannot be handed new code to run")
+    # The policy refuses `python -c` because that flag reaches past every other
+    # limit in it. Writing a script into scratch and running it arrives at the
+    # same place, so scratch lives beside the checkout rather than inside the
+    # tree run_tests executes. Put scratch back under the workspace and these
+    # fail.
+    from crucible.tools import scratch_dir as _scratch_dir
+
+    runnable = review_policy(work, run_tests=True)
+    scratch = _scratch_dir(work)
+    check("scratch sits outside the workspace",
+          work not in scratch.parents and scratch != work, str(scratch))
+    check("the policy scopes writes to that same directory",
+          bool(runnable.check("write_scratch",
+                              {"path": str(scratch / "note.txt"), "content": "x"})))
+    check("a script written to scratch cannot then be run",
+          not runnable.check("run_tests",
+                             {"command": f'python "{scratch / "repro.py"}"'}))
+    check("and the refusal says the file is outside the workspace",
+          "workspace" in runnable.check(
+              "run_tests", {"command": f'python "{scratch / "repro.py"}"'}).reason)
+    check("writing into the checkout itself is still refused",
+          not runnable.check("write_scratch",
+                             {"path": str(work / "evil.py"), "content": "x"}))
+    check("the checkout's own tests still run",
+          bool(runnable.check("run_tests", {"command": "python -m pytest"})))
+
     section("policy: the answers are out of reach of the hunters")
     # The demo workspace carries the list of planted defects, and a hunter that
     # reads it scores full marks having found nothing. Removing the carve-out

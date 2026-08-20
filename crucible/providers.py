@@ -19,6 +19,7 @@ import os
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from enum import Enum
@@ -108,11 +109,17 @@ RATES: dict[str, tuple[float, float]] = {
     "deepseek-v4-flash": (0.44, 1.32),
 
     # OpenRouter routes one model id across several upstream hosts at
-    # differing rates, so these are rounded up from the dearest seen.
+    # differing rates, and which host serves a given call is theirs to choose.
+    # These are the dearest route each id can land on, at standing rather than
+    # promotional rates. Taking the headline figure instead means pricing the
+    # discounted route and reserving a fraction of what the call can bill:
+    # google/gemini-3.7-flash advertises 0.375 on a discounted Vertex route
+    # while the same id also serves from AI Studio at four times that once the
+    # introductory rate lapses.
     "anthropic/claude-opus-5": (5.00, 25.00),
-    "deepseek/deepseek-v4-pro-0813": (1.19, 3.57),
-    "google/gemini-3.7-flash": (0.38, 1.88),
-    "qwen/qwen3.8-2.4t-a95b": (2.00, 6.00),
+    "deepseek/deepseek-v4-pro-0813": (1.32, 3.96),
+    "google/gemini-3.7-flash": (1.50, 7.50),
+    "qwen/qwen3.8-2.4t-a95b": (2.50, 7.50),
 }
 
 # Stand-ins that reach no vendor and bill nothing. Named explicitly, because
@@ -403,9 +410,20 @@ class OpenAIProvider:
     # trust. One transposed line in a config file, `metered = false` left over
     # from a local experiment above a base_url pointing back at a vendor, and
     # the only limit on the run is how long someone leaves it running.
-    BILLED_HOSTS = ("api.openai.com", "api.anthropic.com", "api.mistral.ai",
-                    "api.groq.com", "api.deepseek.com", "api.together.xyz",
-                    "openrouter.ai", "generativelanguage.googleapis.com")
+    #
+    # Every host in the registry is folded in automatically, because keeping a
+    # second hand-written list in step with it failed the first time it was
+    # tested: xAI was added to the shelf with its base URL and its own model
+    # table, and the guard never heard about it, so `metered = false` over
+    # api.x.ai was accepted and priced every call at zero.
+    BILLED_HOSTS = tuple(sorted({
+        "api.openai.com", "api.anthropic.com", "api.mistral.ai",
+        "api.groq.com", "api.deepseek.com", "api.together.xyz",
+        "openrouter.ai", "generativelanguage.googleapis.com",
+    } | {
+        (urllib.parse.urlsplit(spec.base_url).hostname or "").lower()
+        for spec in PROVIDERS.values()
+    }))
     BILLED_SUFFIXES = (".openai.azure.com", ".api.cognitive.microsoft.com")
 
     def _refuse_unmetered_billed_host(self) -> None:

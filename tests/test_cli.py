@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from crucible import config as cfg  # noqa: E402
 from crucible.ledger import GENESIS, Ledger, _digest  # noqa: E402
 from crucible.policy import Policy, review_policy  # noqa: E402
+from crucible.tools import scratch_dir  # noqa: E402
 from crucible.providers import (  # noqa: E402
     DEFAULT_BASE_URL, RATES, Budget, BudgetExceeded, OpenAIProvider, Tier,
 )
@@ -565,7 +566,7 @@ def regression_checks(tmp: Path) -> None:
     # A truncated payload leaves the path decidable, so the call is replayed
     # and only its size limit goes unchecked.
     led.append("tool_call", agent="h", tool="write_scratch",
-               args={"path": str(work2 / ".crucible-scratch" / "n.txt"),
+               args={"path": str(scratch_dir(work2) / "n.txt"),
                      "content": "<812 chars>"})
     led.append("run_finished", run_id="t1", raised=0, survived=0, spend_usd=0.0,
                halted="", agent_failures=0, agents_run=1, probe_held=True)

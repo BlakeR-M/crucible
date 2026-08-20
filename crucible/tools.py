@@ -51,6 +51,26 @@ SUBPROCESS_ENV_KEEP = frozenset({
 SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASS", "_PASSWORD")
 
 
+def scratch_dir(workspace: Path) -> Path:
+    """Where an agent may write, which is beside the checkout and never in it.
+
+    This used to live at workspace/.crucible-scratch, inside the tree that
+    run_tests is scoped to, and that combination handed back every capability
+    the policy takes away. The policy refuses `python -c` because, as its own
+    comment says, that flag reaches past every other limit. Writing a .py file
+    into scratch and asking the permitted interpreter to run it arrives at the
+    same place by a door the guard was not watching: reads outside the
+    workspace, writes past the size ceiling, edits to the code under review,
+    and a socket.
+
+    A sibling directory keeps scratch writable and keeps it out of every
+    execution scope, so run_tests can only run code that was already in the
+    checkout. That is the grant the policy docstring describes.
+    """
+    workspace = Path(workspace).resolve()
+    return workspace.parent / (workspace.name + ".crucible-scratch")
+
+
 def _is_hidden_within(entry: Path, root: Path) -> bool:
     """Whether a path is hidden by its position inside the workspace.
 
@@ -154,7 +174,7 @@ class Toolbox:
         self.policy = policy
         self.ledger = ledger
         self.agent_id = agent_id
-        self.scratch = self.workspace / ".crucible-scratch"
+        self.scratch = scratch_dir(self.workspace)
         # Shared with every per-agent view, so the run's totals are the run's
         # and not just whatever the unused parent happened to do. Each agent
         # gets its own Toolbox but they are all one run, and a report that said
