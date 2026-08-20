@@ -3,14 +3,16 @@
 *.env
 !demo_target/**
 
-# Run ledgers are written at runtime and are per-deployment.
-runs/*.jsonl
+# Run ledgers are written at runtime and are per-deployment. The published
+# evidence ledger lives in docs/evidence/, deliberately outside this rule.
+runs/**/*.jsonl
 
 # Scratch the agents are permitted to write into.
 demo_target/.crucible-scratch/
 
 __pycache__/
 *.pyc
+.pytest_cache/
 .venv/
 *.egg-info/
 build/

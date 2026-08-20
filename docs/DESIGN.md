@@ -1,17 +1,20 @@
-<!-- Design specification. Written 2026-08-16. -->
+<!-- Design exploration. Written 2026-08-16; status honest as of 2026-08-20. -->
 
-> **What this is.** The visual system: colour tokens with verified contrast
-> ratios, type scale, layout, the glyph set, and motion rules.
+> **What this is.** A design direction that was explored in full and then set
+> aside: a dark instrument theme, with colour tokens at verified contrast
+> ratios, a type scale, layout, glyphs and motion rules. The interface that
+> shipped went a different way, the light paper certificate in
+> `web/static/app.css`, after three rebuilds landed on conversation-first over
+> instrument-first. This document is kept as the record of the road that was
+> considered, and as a bench of decisions to draw on if the instrument look is
+> ever wanted.
 >
-> Two decisions here are load-bearing rather than decorative. Panels are full
-> bleed and separated by hairlines, with no radius and no shadow, because
-> rounded cards floating on a background is the most reliable tell of a
-> template. And the refuted pile keeps permanent screen space, because a system
-> that shows how much of its own output it destroyed is making its argument
-> structurally instead of in copy.
->
-> Implemented in `web/static/app.css`. Where the implementation is simpler than
-> the specification, the specification is the direction of travel.
+> Two decisions here survived into the shipped design in spirit. Panels sit on
+> hairlines with no radius and no shadow, because rounded cards floating on a
+> background is the most reliable tell of a template. And the refuted pile
+> keeps permanent screen space, because a system that shows how much of its
+> own output it destroyed is making its argument structurally instead of in
+> copy.
 
 ---
 

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -48,8 +49,10 @@ from assay.tasks import TASKS
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "assay" / "results"
 
-BASE_URL = "http://127.0.0.1:8080"
-MODEL = "D:\\models\\Qwen2.5-Coder-7B-Instruct-Q6_K.gguf"
+# The same knobs screen.py reads, so the README's one configuration story is
+# true for both experiments. The recorded results ran Qwen2.5-Coder-7B Q6_K.
+BASE_URL = os.environ.get("CRUCIBLE_LOCAL_URL", "http://127.0.0.1:8080")
+MODEL = os.environ.get("CRUCIBLE_LOCAL_MODEL", "local")
 
 TIMEOUT_SECONDS = 10
 

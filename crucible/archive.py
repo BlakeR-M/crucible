@@ -2,11 +2,13 @@
 
 A live run is the proof and it takes two minutes. That is a fair price for
 someone who has already decided to care and much too high for someone deciding
-whether to. So a completed run is written down and the landing page shows a
-real one immediately: the lanes that were drawn, the claims that were raised,
-the ones the verifiers destroyed, what it cost, and the ledger head that lets a
-reader check the record for themselves. Running it live afterwards then answers
-a better question than "what is this", which is "is that archived run real".
+whether to. This module can write a completed run down whole and serve it
+back: the lanes that were drawn, the claims that were raised, the ones the
+verifiers destroyed, what it cost, and the ledger head that lets a reader
+check the record for themselves. Today the server uses `score_against_key`
+from here and the public page carries one curated run as a static ledger in
+docs/evidence/; wiring the full archive into a live landing display is the
+designed next step, and the tests below keep the machinery honest until then.
 
 What is kept, and why each part is here.
 

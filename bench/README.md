@@ -186,7 +186,10 @@ python -m bench.analyse
 
 The runs need a llama.cpp server on `http://127.0.0.1:8080` with the model
 above loaded; `--compare` and `analyse` need only the saved results and run
-anywhere. Every raw reply is saved. `analyse.py` recomputes every number from the saved
+anywhere. `--compare` reads the arm files in `bench/results/`; the committed
+C and D results live one level down in `bench/results/starved/` (kept apart
+because their replies were output-starved, see above), so comparing that pair
+means re-running it, or copying those files up with eyes open. Every raw reply is saved. `analyse.py` recomputes every number from the saved
 text, so any metric added later is applied to both arms by the same code on the
 same day, and the saved runs stay checkable by anyone who wants to disagree with
 the arithmetic.

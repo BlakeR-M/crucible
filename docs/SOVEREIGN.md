@@ -395,6 +395,11 @@ This section is the one that earns trust with a government reviewer. Overstate l
 | **gpt-5** | **74.9%** | 88.4% (89.4 thinking) | 94.6% | — |
 | **gpt-5-mini** | **48.0%** | 68.7 | — | $0.125/M in, $1.00/M out, 400K ctx |
 
+Scores and the price are OpenAI's first-party figures
+([Introducing GPT-5](https://openai.com/index/introducing-gpt-5/) and the API
+pricing page). Resellers list `gpt-5-mini` at about twice this rate, so when
+comparing against a quote, name whose price it is.
+
 ### 7.2 Where local is genuinely at parity
 
 **Judging and verification.** This is the good news and it is the load-bearing finding for the adversarial-verification lane. On reasoning LLM-judge accuracy: **GPT-4.1 75.4%, Gemini-2.5-Pro 78.2%** — against which **Kimi-K2-0711 is 0.2 points behind and gpt-oss-120b-low is 1.5 points behind.** Critiquing an artefact is a much easier task than producing one, and open weights have effectively closed that gap.

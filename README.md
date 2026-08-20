@@ -12,13 +12,17 @@ findings and reported nine; the seven it threw away are the point.
 09 / 16  SURVIVED
 ```
 
+That run is committed whole: [`docs/evidence/`](docs/evidence/) holds its full
+hash-chained ledger with the method, and one command replays every decision in
+it on your machine.
+
 Every agent action is checked against a written policy before it runs, and every
 call and result is written to a hash-chained ledger that someone who does not
 trust you can verify themselves.
 
 ---
 
-## Three things it has actually done
+## What it has actually done
 
 **It found a critical sandbox escape in its own policy engine.** Pointed at its
 own source, it reported that the command allowlist checked only the first word
@@ -55,8 +59,10 @@ and described in the bench README.)
 
 **And the tool reviewing this README was reviewed the same way.** Four agents
 over the new command line code, independent verification on each finding, six
-verified defects, all six real. The worst: a run whose agents all failed exited
-0 and printed a clean bill of health.
+verified defects, all six fixed. The worst: a run whose agents all failed
+exited 0 and printed a clean bill of health. The defect list and the fixes are
+in the commit that landed the CLI; that run predates run archiving, so the
+commit message is its record, and you should weigh the claim accordingly.
 
 ---
 
@@ -203,8 +209,9 @@ matters, and there are three of them per finding.
 | Hunter | `gpt-5-mini` | Many calls in parallel; volume work |
 | Verifier | `gpt-5` | Three per finding; the seat where being wrong is expensive |
 
-A run on those seats has cost between 21 and 39 US cents across thirteen
-recorded runs, median 29.
+A run on those seats has cost between 21 and 39 US cents across twelve
+recorded runs, median 29; two further runs on a smaller budget ceiling came
+in under a dime.
 
 ---
 
@@ -244,22 +251,26 @@ cd crucible
 python -m pip install pytest         # only for the one-command test run
 python -m pytest -q                  # 47 passed: every check file plus the demo target's suite
 python -m crucible.cli --help        # the tool, straight from the checkout
-pip install .                        # or install it: gives you `crucible` and `crucible-server`
+pip install .                        # optional: puts `crucible` (run, verify) on PATH
+
+CRUCIBLE_OFFLINE=1 python -m crucible.cli run demo_target --score
+                                     # a full review with no key: real orchestrator,
+                                     # policy and ledger, a scripted stand-in model
 ```
 
-The one path that needs no API key is the web interface in offline mode. It
-runs the real orchestrator, policy and ledger against the demo target with a
-stand-in model that answers from the prompt, so nothing is spent:
+Offline mode covers the CLI (above) and the web interface alike: the real
+orchestrator, policy and ledger run against the demo target with a stand-in
+model that answers from the prompt, so nothing is spent:
 
 ```bash
 CRUCIBLE_OFFLINE=1 CRUCIBLE_USER=demo CRUCIBLE_PASS=demo python main.py
 # then open http://localhost:8420 and sign in as demo / demo
 ```
 
-Every other path (`crucible run`, `crucible models`, the interface with real
-models, the bench) talks to a model, so it needs `OPENAI_API_KEY` in the
+With offline unset, `crucible run`, `crucible models`, the interface and the
+bench all talk to a real model, so they need `OPENAI_API_KEY` in the
 environment or a local OpenAI-compatible server in `crucible.toml`.
-`crucible verify` needs neither. In the web interface a signed-in visitor can
+`crucible verify` needs neither, ever. In the web interface a signed-in visitor can
 also attach their own OpenAI or Gemini key for the session (held in memory
 only, see the table below), which turns an offline deployment into a live one
 for that visitor without the operator holding a key at all.
@@ -377,6 +388,9 @@ thing, orchestrator and policy and ledger included, without spending anything.
 | `OPENAI_API_KEY` | none | Required for paid runs; read when a run starts |
 | `CRUCIBLE_ENV_FILE` | `.env` at the repo root | File the key is read from when it is absent from the environment |
 | `CRUCIBLE_OFFLINE` | unset | `1` runs everything with a local stand-in model and spends nothing |
+| `CRUCIBLE_PROVIDER` | `openai` | `gemini` switches the interface to Google's OpenAI-compatible endpoint |
+| `GEMINI_API_KEY` | none | Read when `CRUCIBLE_PROVIDER=gemini` |
+| `CRUCIBLE_MODEL_PLANNER` / `_WORKER` / `_VERIFIER` | per provider | Per-seat model overrides for the interface |
 | `PORT` | `8420` | Listen port |
 | `CRUCIBLE_SECRET` | random per boot | Session cookie signing key |
 | `CRUCIBLE_RUN_CEILING_USD` | `0.60` | Spend ceiling for one run |
@@ -443,17 +457,17 @@ a weaker argument. Every line that serves this can be read.
 ```bash
 python -m pytest -q                # everything below, plus the demo target's own suite
 
-python tests/test_core.py          # 71
+python tests/test_core.py          # 72
 python tests/test_orchestrator.py  # 120
 python tests/test_chat.py          # 134
 python tests/test_archive.py       # 102
-python tests/test_cli.py           # 125
+python tests/test_cli.py           # 129
 python tests/test_assay.py         # 20
 python tests/test_repo.py          # 126
-python tests/test_byok.py          # 64
+python tests/test_byok.py          # 81
 ```
 
-**762 checks, no network, no spend.** The check files are plain scripts;
+**784 checks, no network, no spend.** The check files are plain scripts;
 `tests/test_suite.py` runs each one under pytest so a pipeline needs one
 command. The orchestrator suite replaces the model
 with a stand-in that answers from the prompt it is given, because a queue of
