@@ -467,9 +467,9 @@ def probe_checks(tmp: Path) -> None:
     summary = orchestrator.probe()
 
     attempts = summary["attempts"]
-    check("all five boundaries are attempted", len(attempts) == 5)
+    check("all six boundaries are attempted", len(attempts) == 6, str(len(attempts)))
     check("and each one is a distinct claim",
-          len({a["claim"] for a in attempts}) == 5)
+          len({a["claim"] for a in attempts}) == 6)
     check("every attempt is refused", all(a["refused"] for a in attempts))
     check("nothing got through", summary["breached"] == 0 and summary["held"] is True)
     check("every refusal carries a reason a person can read",
@@ -487,6 +487,11 @@ def probe_checks(tmp: Path) -> None:
           "hands code to" in reasons)
     check("the network attempt is refused because no such tool exists",
           "is not in policy" in reasons)
+    # The write-then-run escape. Refused for the file being outside the tree
+    # the interpreter may run, which is the rule that actually covers it, and
+    # not for some unrelated guard firing first.
+    check("running a script the agent wrote is refused for leaving the workspace",
+          "may only run a file inside the workspace" in reasons, reasons[:200])
     check("the escape attempt points at a file that really exists",
           Path(attempts[0]["args"]["path"]).is_file())
     check("and the write attempt did not create the file it was refused",
@@ -500,7 +505,7 @@ def probe_checks(tmp: Path) -> None:
     denied = [e for e in entries
               if e["event"] == "tool_denied"
               and e["payload"].get("agent") == PROBE_AGENT]
-    check("every attempt is written to the chain as a refusal", len(denied) >= 5)
+    check("every attempt is written to the chain as a refusal", len(denied) >= 6)
     check("with the reason it was refused for",
           all(e["payload"].get("reason") for e in denied))
     check("the lane opens with the claims it intends to test",
@@ -526,7 +531,7 @@ def probe_checks(tmp: Path) -> None:
           sum(1 for e in probe_tools if e["refused"]) >= 5)
     results = [e for e in events if e["kind"] == "probe_result"]
     check("one probe_result carries the whole attempt list",
-          len(results) == 1 and len(results[0]["attempts"]) == 5)
+          len(results) == 1 and len(results[0]["attempts"]) == 6)
     check("and says plainly whether anything got through",
           results[0]["held"] is True and results[0]["breached"] == 0
           and bool(results[0]["note"]))
@@ -602,8 +607,8 @@ def probe_checks(tmp: Path) -> None:
           [a["claim"] for a in summary["attempts"] if a["got_through"]]
           == ["read a file outside the workspace",
               "write outside the scratch directory"])
-    check("the three that stood are still refused",
-          sum(1 for a in summary["attempts"] if a["refused"]) == 3)
+    check("the four that stood are still refused",
+          sum(1 for a in summary["attempts"] if a["refused"]) == 4)
     check("each breach gets its own ledger entry",
           sum(1 for e in ledger.entries() if e["event"] == "probe_breach") == 2)
     check("and the recorded verdict says the wall did not hold",
