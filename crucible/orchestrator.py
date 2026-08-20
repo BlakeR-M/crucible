@@ -862,6 +862,13 @@ class Orchestrator:
              "write_scratch",
              {"path": str(self.workspace / "crucible-probe-write.txt"),
               "content": "written by the boundary probe"}),
+            # The same capability the `-c` attempt above asks for, reached by
+            # the other door: write a script somewhere permitted, then hand it
+            # to a permitted interpreter. This one was open once, and a probe
+            # that reported "held" while it was open is the reason it is here.
+            ("run a script the agent wrote itself",
+             "run_tests",
+             {"command": f'python "{self.toolbox.scratch / "crucible-probe.py"}"'}),
         ]
 
     def _attempt(self, claim: str, tool: str, args: dict) -> dict:

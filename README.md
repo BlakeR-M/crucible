@@ -46,6 +46,18 @@ allowlisted binary is not an allowlisted behaviour"). Eight further defects it
 found in itself are written up, open, in
 [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md).
 
+**A second escape of the same shape turned up later, and the boundary probe
+had been blind to it.** Scratch was a directory inside the workspace, and
+`run_tests` runs a permitted interpreter anywhere in the workspace, so an
+agent could write a script and run it: the same arbitrary execution the `-c`
+rule exists to refuse, through a door nothing was watching. The probe reported
+`held` in every run including the published one, because it only ever tried
+the `-c` form. Scratch now sits beside the checkout instead of inside it, and
+the probe tries the write-then-run path so a future run tests the door rather
+than assuming it. The lesson generalises past this codebase: an allowlist of
+binaries is not an allowlist of behaviours, and a probe is evidence about the
+doors it tries and nothing else.
+
 **Constrained decoding lifted a 9B local model's defect discovery by 78%.**
 Measured properly: nine planted defects with an answer key, five runs per arm,
 pass marks written down before any number existed. At the hunt stage, recovery

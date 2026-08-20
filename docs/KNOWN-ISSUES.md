@@ -85,6 +85,42 @@ bucket resets on read. A run spanning midnight can have its spend dropped.
 
 ## Fixed, for the record
 
+### An agent could write a script into scratch and run it
+
+The policy refuses `python -c` because that flag, in the words of the comment
+guarding it, "grants every capability the rest of the policy just refused".
+Scratch sat at `workspace/.crucible-scratch`, inside the tree `run_tests` is
+scoped to, so writing a `.py` file and asking a permitted interpreter to run
+it arrived at exactly the same place: reads outside the workspace, writes past
+the size ceiling, edits to the code under review, and a socket.
+
+Two things about this are worth keeping. It is the second defect of this shape
+in the same file, after the `-c` hole the arena found in itself, which says
+the lesson generalises: an allowlist of binaries is not an allowlist of
+behaviours, and every path by which new code reaches a permitted interpreter
+has to be closed, not just the obvious one. And the boundary probe reported
+`held: true` throughout, including in the published evidence run, because it
+only ever tried the `-c` form. A probe is evidence about the doors it tries.
+
+Scratch is now a sibling of the checkout rather than a child, so `run_tests`
+can only execute files that were already in it. The probe gained the
+write-then-run attempt, so a future run proves the door is shut rather than
+leaving it untested, and `tests/test_core.py` fails if scratch moves back
+inside the workspace.
+
+### The demo answer key was readable by the agents reviewing beside it
+
+`demo_target/.answer_key.json` lists the nine planted defects and is the basis
+of every score the benchmark reports. It sits inside the tree the hunters
+read. Listing and search skipped it for being a dotfile, so reaching it needed
+the exact filename, and `grep -c answer_key docs/evidence/*.jsonl` returns
+zero, so the published run never touched it. The hole was open regardless, and
+a hunter that reads the answers has found nothing.
+
+The policy holds the file back by name for `read_file` and `search`, the
+refusal is written to the ledger like any other, and the carve-out travels in
+the policy the record carries so a replay decides what the live run decided.
+
 ### A repository named by URL could run its own tests beside the key
 
 `crucible run <url>` and the interface's repository field reviewed a clone
