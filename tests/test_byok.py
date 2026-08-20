@@ -411,7 +411,10 @@ def hardening_checks() -> None:
               resp.status == 200, str(resp.status))
         check("and it carries the evidence and the description tag",
               "docs/evidence" in page and 'name="description"' in page)
-        check("and the sign-in stays one link away", 'href="/login"' in page)
+        check("and the corner points at the repository, with the sign-in "
+              "form advertised nowhere",
+              "github.com/BlakeR-M/crucible" in page
+              and 'href="/login"' not in page)
         conn.close()
 
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
