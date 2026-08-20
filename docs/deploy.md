@@ -49,8 +49,8 @@ in the interface serves from the live process.
 
 ## Steps
 
-Blake runs these. `railway login` opens a browser and is the one step nobody
-else can do.
+The account owner runs these. `railway login` opens a browser and is the one
+step that stays with whoever holds the account.
 
 1. **Create the service from GitHub.** Railway dashboard, New Project, Deploy
    from GitHub repo, pick `BlakeR-M/crucible`, branch `main`. Railpack detects

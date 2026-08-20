@@ -34,25 +34,106 @@ class Tier(str, Enum):
 
 
 # Rates in US dollars per million tokens, input and output. These drive the
-# budget guard, so they are deliberately rounded up: a cap computed from a
-# stale-but-generous rate stops early, which is the safe direction. Check them
-# against current pricing before quoting a real figure to anyone.
+# budget guard, so every one is the HIGHEST price the model can bill: a cap
+# computed from a generous rate stops early, which is the safe direction, and
+# a rate that is too low quietly authorises spending past the ceiling someone
+# set. Checked against vendor pricing pages on 2026-08-20.
+#
+# Three ways a published headline price understates what a run actually bills,
+# all of which have been folded into the numbers below rather than left for
+# the caller to remember:
+#
+#   Prompt-length tiers. Google doubles the pro models above a 200k-token
+#   prompt, and xAI doubles everything above 200k. A code review carrying a
+#   diff plus surrounding files crosses that line without trying, so these sit
+#   at the long-prompt rate.
+#
+#   Clock pricing. DeepSeek bills peak and off-peak rates that differ by 2x,
+#   so these are the peak figures.
+#
+#   Introductory pricing. A promotional rate that lapses on a date turns a
+#   correct table into an understated one on that date with no code change, so
+#   these are the standing rates rather than the promotion.
+#
+# An alias that the vendor re-points at will (gemini-flash-latest was one) can
+# back no ceiling at all, since the price moves under a table that cannot know
+# it moved. Name versions explicitly instead.
 RATES: dict[str, tuple[float, float]] = {
+    # OpenAI. Verified unchanged 2026-08-20.
     "gpt-5": (1.25, 10.00),
     "gpt-5-mini": (0.25, 2.00),
+    "gpt-5-nano": (0.05, 0.40),
+    "gpt-5.6-luna": (0.20, 1.20),
+    "gpt-5.6-terra": (2.00, 12.00),
     "gpt-4.1-mini": (0.40, 1.60),
+    "gpt-4.1": (2.00, 8.00),
+    # o4-mini retires 23 October 2026. Priced correctly until then, and its
+    # named replacement gpt-5.6-terra costs about twice as much, so a swap
+    # wants the ceiling looked at rather than only the model name.
     "o4-mini": (1.10, 4.40),
-    # Gemini through its OpenAI-compatible endpoint. Rates are conservative
-    # estimates so the budget errs towards refusing; an unknown model is
-    # priced at the table maximum, which is stricter still.
-    "gemini-3.1-pro-preview": (2.00, 12.00),
-    "gemini-2.5-pro": (1.25, 10.00),
-    "gemini-3.5-flash": (0.35, 3.00),
-    "gemini-2.5-flash": (0.30, 2.50),
-    "gemini-flash-latest": (0.35, 3.00),
+    "o3": (2.00, 8.00),
+
+    # Anthropic, through its OpenAI-compatible endpoint.
+    "claude-opus-5": (5.00, 25.00),
+    "claude-fable-5": (10.00, 50.00),
+    # Standing rate. An introductory 2.00/10.00 runs to 31 August 2026, and
+    # pricing the promotion would understate this row from 1 September.
+    "claude-sonnet-5": (3.00, 15.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+
+    # Google, through its OpenAI-compatible endpoint. The pro rows are the
+    # above-200k prompt tier, which is double the headline on input.
+    "gemini-3.1-pro-preview": (4.00, 18.00),
+    "gemini-2.5-pro": (2.50, 15.00),
+    "gemini-3.7-flash": (1.50, 7.50),
+    "gemini-3.6-flash": (1.50, 7.50),
+    "gemini-3.5-flash": (1.50, 9.00),
+    "gemini-3.5-flash-lite": (0.30, 2.50),
+    "gemini-3.1-flash-lite": (0.25, 1.50),
+    # Audio input bills at 1.00 against 0.30 for text, so this carries the
+    # audio rate even though the arena sends text.
+    "gemini-2.5-flash": (1.00, 2.50),
+    "gemini-2.5-flash-lite": (0.30, 0.40),
+
+    # xAI. Every row is the above-200k prompt tier, which is double the
+    # headline rate for the whole family.
+    "grok-4.6": (4.00, 12.00),
+    "grok-4.3": (2.50, 5.00),
+    "grok-build-0.1": (2.00, 4.00),
+
+    # DeepSeek, at peak-hour rates. Off-peak is half of each.
+    "deepseek-v4-pro": (1.32, 3.96),
+    "deepseek-v4-flash": (0.44, 1.32),
+
+    # OpenRouter routes one model id across several upstream hosts at
+    # differing rates, so these are rounded up from the dearest seen.
+    "anthropic/claude-opus-5": (5.00, 25.00),
+    "deepseek/deepseek-v4-pro-0813": (1.19, 3.57),
+    "google/gemini-3.7-flash": (0.38, 1.88),
+    "qwen/qwen3.8-2.4t-a95b": (2.00, 6.00),
 }
 
-# Gemini's OpenAI-compatible endpoint. Selected with CRUCIBLE_PROVIDER=gemini.
+DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_MODELS: dict[Tier, str] = {
+    Tier.PLANNER: "gpt-5",
+    Tier.WORKER: "gpt-5-mini",
+    Tier.VERIFIER: "gpt-5",
+}
+
+# Anthropic speaks the OpenAI shape at /v1/chat/completions and takes a normal
+# bearer key there. Its model list is the native API and wants different
+# headers, which is why probing a key is provider-specific (see byok.py).
+ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
+ANTHROPIC_DEFAULT_MODELS: dict[Tier, str] = {
+    Tier.PLANNER: "claude-opus-5",
+    Tier.WORKER: "claude-haiku-4-5",
+    Tier.VERIFIER: "claude-opus-5",
+}
+
+# Gemini's OpenAI-compatible endpoint. The trailing path matters: /v1beta/
+# alone is the native Gemini API and speaks a different shape.
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 GEMINI_DEFAULT_MODELS: dict[Tier, str] = {
     Tier.PLANNER: "gemini-3.1-pro-preview",
@@ -60,10 +141,25 @@ GEMINI_DEFAULT_MODELS: dict[Tier, str] = {
     Tier.VERIFIER: "gemini-3.1-pro-preview",
 }
 
-DEFAULT_MODELS: dict[Tier, str] = {
-    Tier.PLANNER: "gpt-5",
-    Tier.WORKER: "gpt-5-mini",
-    Tier.VERIFIER: "gpt-5",
+XAI_BASE_URL = "https://api.x.ai/v1"
+XAI_DEFAULT_MODELS: dict[Tier, str] = {
+    Tier.PLANNER: "grok-4.6",
+    Tier.WORKER: "grok-build-0.1",
+    Tier.VERIFIER: "grok-4.6",
+}
+
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_DEFAULT_MODELS: dict[Tier, str] = {
+    Tier.PLANNER: "deepseek-v4-pro",
+    Tier.WORKER: "deepseek-v4-flash",
+    Tier.VERIFIER: "deepseek-v4-pro",
+}
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_DEFAULT_MODELS: dict[Tier, str] = {
+    Tier.PLANNER: "anthropic/claude-opus-5",
+    Tier.WORKER: "google/gemini-3.7-flash",
+    Tier.VERIFIER: "anthropic/claude-opus-5",
 }
 
 # Models that think before they answer, and charge for the thinking out of the
@@ -71,11 +167,95 @@ DEFAULT_MODELS: dict[Tier, str] = {
 # all 400 reasoning and returns an empty string, which reads exactly like a
 # refusal and is not one. Found by smoke test rather than by reading the docs,
 # which is why the smoke test exists.
-REASONING_MODELS = ("gpt-5", "o3", "o4", "gemini")
+REASONING_MODELS = ("gpt-5", "o3", "o4", "gemini", "claude", "grok", "deepseek",
+                    "qwen")
+
+
+def thinks_before_answering(model: str) -> bool:
+    """Whether a model spends its output allowance reasoning first.
+
+    A gateway names the same model with its vendor in front, so
+    'anthropic/claude-opus-5' has to match what 'claude-opus-5' matches. Left
+    unmatched, the call gets no headroom, spends the allowance thinking, and
+    returns an empty string that reads exactly like a refusal.
+    """
+    name = str(model or "").lower()
+    return name.startswith(REASONING_MODELS) or name.rsplit("/", 1)[-1].startswith(
+        REASONING_MODELS)
 
 # Headroom added on top of the caller's request for those models, so the answer
 # has somewhere to go once the reasoning is paid for.
 REASONING_HEADROOM = 4000
+
+
+@dataclass(frozen=True)
+class ProviderSpec:
+    """One vendor the arena knows how to talk to.
+
+    Every vendor here answers the OpenAI chat shape, so the arena holds one
+    client and changes a base URL. What differs between them is which models
+    they price, which environment variable carries the key, and how a key is
+    checked before it is kept, which is why those live in the table rather
+    than in branches spread through the code.
+    """
+
+    key: str
+    label: str
+    base_url: str
+    defaults: dict[Tier, str]
+    env_var: str
+    key_hint: str
+    # How to ask the vendor whether a key is good. "bearer" is a GET on
+    # {base}/models with an Authorization header, which every vendor here
+    # answers except Anthropic, whose model list is the native API.
+    probe_style: str = "bearer"
+
+    @property
+    def models(self) -> tuple[str, ...]:
+        """The models a visitor may name, which is every model this vendor
+        offers that the rates table can price. A model the budget cannot
+        price is a model the ceiling cannot hold."""
+        return tuple(m for m in RATES if m in _MODELS_BY_PROVIDER[self.key])
+
+
+_MODELS_BY_PROVIDER: dict[str, frozenset[str]] = {
+    "openai": frozenset({"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5.6-luna",
+                         "gpt-5.6-terra", "gpt-4.1-mini", "gpt-4.1", "o4-mini",
+                         "o3"}),
+    "anthropic": frozenset({"claude-opus-5", "claude-fable-5", "claude-sonnet-5",
+                            "claude-opus-4-8", "claude-sonnet-4-6",
+                            "claude-haiku-4-5"}),
+    "gemini": frozenset({"gemini-3.1-pro-preview", "gemini-2.5-pro",
+                         "gemini-3.7-flash", "gemini-3.6-flash",
+                         "gemini-3.5-flash", "gemini-3.5-flash-lite",
+                         "gemini-3.1-flash-lite", "gemini-2.5-flash",
+                         "gemini-2.5-flash-lite"}),
+    "xai": frozenset({"grok-4.6", "grok-4.3", "grok-build-0.1"}),
+    "deepseek": frozenset({"deepseek-v4-pro", "deepseek-v4-flash"}),
+    "openrouter": frozenset({"anthropic/claude-opus-5",
+                             "deepseek/deepseek-v4-pro-0813",
+                             "google/gemini-3.7-flash",
+                             "qwen/qwen3.8-2.4t-a95b"}),
+}
+
+PROVIDERS: dict[str, ProviderSpec] = {
+    spec.key: spec for spec in (
+        ProviderSpec("openai", "OpenAI", DEFAULT_BASE_URL, DEFAULT_MODELS,
+                     "OPENAI_API_KEY", "sk-..."),
+        ProviderSpec("anthropic", "Claude", ANTHROPIC_BASE_URL,
+                     ANTHROPIC_DEFAULT_MODELS, "ANTHROPIC_API_KEY", "sk-ant-...",
+                     probe_style="anthropic"),
+        ProviderSpec("gemini", "Gemini", GEMINI_BASE_URL, GEMINI_DEFAULT_MODELS,
+                     "GEMINI_API_KEY", "AIza..."),
+        ProviderSpec("xai", "Grok", XAI_BASE_URL, XAI_DEFAULT_MODELS,
+                     "XAI_API_KEY", "xai-..."),
+        ProviderSpec("deepseek", "DeepSeek", DEEPSEEK_BASE_URL,
+                     DEEPSEEK_DEFAULT_MODELS, "DEEPSEEK_API_KEY", "sk-..."),
+        ProviderSpec("openrouter", "OpenRouter", OPENROUTER_BASE_URL,
+                     OPENROUTER_DEFAULT_MODELS, "OPENROUTER_API_KEY",
+                     "sk-or-v1-..."),
+    )
+}
 
 
 class BudgetExceeded(RuntimeError):
@@ -179,9 +359,6 @@ class Completion:
     seconds: float
 
 
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
-
-
 class OpenAIProvider:
     """Chat completions over plain urllib, so the arena has no dependencies.
 
@@ -260,7 +437,7 @@ class OpenAIProvider:
     def complete(self, system: str, user: str, tier: Tier, budget: Budget,
                  *, max_output: int = 2000, reasoning: str = "low") -> Completion:
         model = self.models[tier]
-        thinks = model.startswith(REASONING_MODELS)
+        thinks = thinks_before_answering(model)
         # Headroom for anything that reasons before it answers, and for every
         # unmetered model whether it does or not. The hosted reasoning families
         # are known by name; a local one is called whatever its author felt
@@ -416,7 +593,7 @@ def models_from_env(defaults: dict[Tier, str]) -> dict[Tier, str]:
 
 
 def provider_from_env(*, extra_env: Path | None = None):
-    """The paid provider, chosen by CRUCIBLE_PROVIDER (openai by default, or gemini).
+    """The paid provider, chosen by CRUCIBLE_PROVIDER. OpenAI by default.
 
     Keys come from the process environment first and a named env file second.
     On Railway the key arrives as a real environment variable. On a workstation
@@ -425,16 +602,17 @@ def provider_from_env(*, extra_env: Path | None = None):
     CRUCIBLE_MODEL_WORKER and CRUCIBLE_MODEL_VERIFIER.
     """
     kind = os.environ.get("CRUCIBLE_PROVIDER", "openai").strip().lower()
-    if kind == "gemini":
-        key = _env_or_file("GEMINI_API_KEY", extra_env)
-        if not key:
-            raise RuntimeError("CRUCIBLE_PROVIDER=gemini needs GEMINI_API_KEY in the environment or the named env file")
-        return OpenAIProvider(key, models_from_env(GEMINI_DEFAULT_MODELS), base_url=GEMINI_BASE_URL)
-    if kind != "openai":
-        raise RuntimeError(f"CRUCIBLE_PROVIDER must be openai or gemini, not {kind!r}")
-    key = _env_or_file("OPENAI_API_KEY", extra_env)
+    spec = PROVIDERS.get(kind)
+    if spec is None:
+        named = ", ".join(sorted(PROVIDERS))
+        raise RuntimeError(
+            f"CRUCIBLE_PROVIDER is {kind!r}. Pick one of: {named}"
+        )
+    key = _env_or_file(spec.env_var, extra_env)
     if not key:
         raise RuntimeError(
-            "no OPENAI_API_KEY in the environment or the named env file"
+            f"CRUCIBLE_PROVIDER={spec.key} needs {spec.env_var} in the "
+            f"environment or the named env file"
         )
-    return OpenAIProvider(key, models_from_env(DEFAULT_MODELS))
+    return OpenAIProvider(key, models_from_env(spec.defaults),
+                          base_url=spec.base_url)

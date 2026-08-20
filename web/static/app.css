@@ -36,7 +36,10 @@
   --face-mono: "Cascadia Mono", ui-monospace, SFMono-Regular, Consolas,
                "DejaVu Sans Mono", monospace;
 
-  --t-hero:  clamp(2.1rem, 5vw, 3.4rem);
+  --indent:  20px;
+  /* The floor has to clear a 339px content box at 375px, so it sits low and
+     the viewport term does the work up to about 725px. */
+  --t-hero:  clamp(1.75rem, 7.5vw, 3.4rem);
   --t-huge:  2.5rem;     /* 40 */
   --t-title: 1.5rem;     /* 24 */
   --t-body:  1.0625rem;  /* 17 */
@@ -51,12 +54,24 @@ body {
   color: var(--ink); font-family: var(--face-text);
   font-size: var(--t-body); line-height: 1.55;
   -webkit-font-smoothing: antialiased; overflow: hidden;
+  /* A backstop, so one wide child can never drag the page sideways again. */
+  overflow-x: clip;
 }
+
+/* Keyboard users reach the tool without walking the header first. */
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 60;
+  background: var(--ink); color: var(--paper); padding: 10px 16px;
+  text-decoration: none; font-size: var(--t-sub);
+}
+.skip:focus-visible { left: 0; }
 .mono { font-family: var(--face-mono); font-size: .88em;
         font-variant-numeric: tabular-nums lining-nums; }
 .fig { font-variant-numeric: tabular-nums lining-nums; }
 a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
-::selection { background: var(--paper-wash); }
+/* The accent at low alpha. The old wash sat at about 1.03:1 against paper,
+   which made a selection all but invisible. */
+::selection { background: rgba(140, 21, 21, .16); color: var(--ink); }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 ::-webkit-scrollbar { width: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--rule); }
@@ -86,8 +101,17 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 
 /* --------------------------------------------------------------- the work */
 
-.work { min-height: 0; display: grid; grid-template-rows: auto auto 1fr auto auto;
+/* Every child is pinned to its own row. Left to auto-placement, hiding the
+   narration and score rows on the landing moved the stage up into row 1,
+   where it sized to content and left the 1fr row as an empty band below it. */
+.work { min-height: 0; display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr) auto auto;
         width: 100%; max-width: 1060px; }
+.narrate { grid-row: 1; }
+.score   { grid-row: 2; }
+.stage   { grid-row: 3; }
+.ticker  { grid-row: 4; }
+.after   { grid-row: 5; }
 
 /* The step-by-step walkthrough, driven by the run's own events. */
 .narrate {
@@ -151,20 +175,68 @@ body.landing .stage { display: flex; padding: 28px 24px; }
 #demo-go:disabled { background: var(--ink-faint); cursor: default; }
 .hero-note { font-size: var(--t-marg); color: var(--ink-faint); max-width: 30ch; }
 .proof { font-size: var(--t-sub); color: var(--ink-muted); max-width: 60ch; }
-.take {
-  margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--rule-hair);
+
+/* A still of the run view, so the strikethrough on a disproved claim is
+   visible to someone who will not press the button. Plain markup: no image,
+   no script, nothing fetched. */
+.still { margin: 22px 0 4px; border: 1px solid var(--rule); background: var(--paper); }
+.still-score {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px; border-bottom: 1px solid var(--rule-hair);
   font-size: var(--t-marg); color: var(--ink-muted);
 }
+.still-score b { font-family: var(--face-display); font-size: 1.6rem;
+                 font-weight: 400; color: var(--ink); margin-right: 5px; }
+.still-score .k b { color: var(--rubric); }
+.still-score .sep { color: var(--rule-strong); }
+.still-claim {
+  padding: 11px 16px; border-left: 2px solid var(--ink);
+  margin: 11px 16px; background: var(--paper-wash);
+}
+.still-claim .st { display: inline; font-weight: 700; font-size: var(--t-sub); }
+.still-claim .wh { display: block; font-family: var(--face-mono);
+                   font-size: var(--t-note); color: var(--ink-muted); margin-top: 3px; }
+.still-claim .ru { display: block; font-family: var(--face-display);
+                   font-style: italic; font-size: var(--t-marg); margin-top: 7px; }
+.still-claim .ru i { font-style: normal; font-family: var(--face-text);
+                     color: var(--ink-faint); }
+.still-claim.dead { border-left-color: var(--rubric); background: var(--paper-leaf); }
+.still-claim.dead .st {
+  color: var(--ink-struck);
+  background-image: linear-gradient(var(--rubric), var(--rubric));
+  background-repeat: no-repeat; background-size: 100% 1.5px;
+  background-position: 0 64%;
+}
+.still-claim.dead .ru { color: var(--rubric); }
+.still figcaption {
+  padding: 0 16px 12px; font-size: var(--t-note); color: var(--ink-faint);
+}
+
+.take {
+  margin-top: 32px; font-size: var(--t-marg); color: var(--ink-muted);
+}
+.take .meta { display: block; margin-top: 5px; color: var(--ink-faint); }
 
 /* The URL form and the key form share one look: fields, a button, one line
  * of guidance beneath. */
-.repo { margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--rule-hair); }
+/* Three separations of three different weights, so they read as structure
+   rather than as three identical slices of the same page. */
+.repo { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--rule); }
 .byo-wrap { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule-hair); }
-.byo-wrap summary { cursor: pointer; font-size: var(--t-sub); color: var(--ink-muted); }
+.byo-wrap summary {
+  cursor: pointer; font-size: var(--t-sub); color: var(--ink-muted);
+  list-style: none; width: fit-content;
+}
+.byo-wrap summary::-webkit-details-marker { display: none; }
+.byo-wrap summary::before {
+  content: "+"; font-family: var(--face-mono); color: var(--rule-strong);
+  margin-right: 8px;
+}
+.byo-wrap[open] summary::before { content: "\2212"; }
 .byo-wrap summary:hover, .byo-wrap[open] summary { color: var(--ink); }
 .byo { margin-top: 10px; }
 .repo label, .byo label { display: block; color: var(--ink); font-size: var(--t-sub); margin-bottom: 6px; }
-.repo .row, .byo .row { display: flex; gap: 9px; align-items: center; }
+.repo .row, .byo .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
 .repo input, .byo input, .byo select {
   flex: 1; min-width: 0; font-family: var(--face-mono, monospace); font-size: var(--t-marg);
   color: var(--ink); background: var(--paper); border: 1px solid var(--rule); padding: 8px 10px;
@@ -195,12 +267,14 @@ body.landing .stage { display: flex; padding: 28px 24px; }
 /* ------------------------------------------------------------- the thread */
 
 .node { position: relative; }
+/* One variable, so a phone can spend less of its width on indentation. Each
+   nesting level used to cost a fixed 32px, and a finding sits two deep. */
 .node > .kids, .node > .attacks > .kids {
-  margin-left: 12px; padding-left: 20px;
+  margin-left: calc(var(--indent) * 0.6); padding-left: var(--indent);
   border-left: 1px solid var(--rule-hair);
 }
 .node > .kids > .node::before {
-  content: ""; position: absolute; left: -20px; top: .8em;
+  content: ""; position: absolute; left: calc(var(--indent) * -1); top: .8em;
   width: 13px; height: 1px; background: var(--rule-hair);
 }
 
@@ -220,7 +294,11 @@ body.landing .stage { display: flex; padding: 28px 24px; }
 .acts .a {
   font-family: var(--face-mono); font-size: var(--t-marg);
   color: var(--ink-faint); line-height: 1.6;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80ch;
+  /* The ceiling has to be relative as well as absolute. At 80ch alone nothing
+     constrained the width below the viewport, so the ellipsis never fired and
+     a long action line widened the whole page instead of clipping. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: min(80ch, 100%);
 }
 .acts .a b { font-weight: 400; color: var(--ink-muted); }
 .acts .a.no, .acts .a.no b { color: var(--rubric); }
@@ -308,16 +386,25 @@ body.landing .stage { display: flex; padding: 28px 24px; }
   .work { height: auto; }
   .stage { overflow: visible; }
   .score { flex-wrap: wrap; gap: 14px; }
-  .score .n b { font-size: var(--t-title); }
+  .score .n b { font-size: 2rem; }
   .ticker, .after { position: sticky; bottom: 0; }
 }
 @media (max-width: 620px) {
-  :root { --t-huge: 1.75rem; --t-body: 1rem; --t-sub: .875rem; }
+  :root { --t-body: 1rem; --t-sub: .875rem; --indent: 9px; }
   .head .thesis { display: none; }
   .head .in { height: 44px; }
   body.landing .stage { padding: 22px 18px; }
   .hero-acts { gap: 12px; }
   #demo-go { width: 100%; }
+  .score .n b { font-size: 1.75rem; }
+  /* Anything under 16px makes iOS Safari zoom the viewport on focus and leaves
+     the visitor stranded there. The extra padding brings the target to 44px. */
+  .repo input, .byo input, .byo select { font-size: 16px; padding: 11px 10px; }
+  .byo #byo-key { flex: 1 1 100%; }
+  .byo select, .byo button, .repo button { flex: 1 1 auto; }
+  /* A long tool-call line wraps rather than widening the page. */
+  .acts .a { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+  .node > .kids > .node::before { display: none; }
 }
 
 /* ------------------------------------------------------------------ login */

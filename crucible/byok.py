@@ -10,9 +10,9 @@ session cookie, expires when the cookie does, and is dropped on logout. It is
 never written to disk, to a ledger, to an event, or to a log line, and it is
 never echoed back to the browser.
 
-The provider is one of two named vendors. A visitor names "openai" or
-"gemini" and the base URL is ours; a stranger's URL would turn the hosted box
-into a request proxy, so there is no field for one.
+The provider is one of the named vendors in providers.PROVIDERS, and the base
+URL is ours. A stranger's URL would turn the hosted box into a request proxy,
+so there is no field for one.
 
 The models come from a fixed list. Every model a visitor may name is priced in
 the rates table, so the budget that caps a run can always price the call.
@@ -27,17 +27,27 @@ import time
 import urllib.error
 import urllib.request
 
-from .providers import (
-    DEFAULT_BASE_URL, DEFAULT_MODELS, GEMINI_BASE_URL, GEMINI_DEFAULT_MODELS,
-    RATES, Tier,
-)
+from .providers import PROVIDERS as _SPECS
+from .providers import Tier
 
+# The same registry, in the shape the server and the browser already read.
 PROVIDERS: dict[str, dict] = {
-    "openai": {"base_url": DEFAULT_BASE_URL, "defaults": DEFAULT_MODELS,
-               "models": tuple(m for m in RATES if not m.startswith("gemini"))},
-    "gemini": {"base_url": GEMINI_BASE_URL, "defaults": GEMINI_DEFAULT_MODELS,
-               "models": tuple(m for m in RATES if m.startswith("gemini"))},
+    spec.key: {
+        "label": spec.label,
+        "base_url": spec.base_url,
+        "defaults": spec.defaults,
+        "models": spec.models,
+        "key_hint": spec.key_hint,
+        "probe_style": spec.probe_style,
+    }
+    for spec in _SPECS.values()
 }
+
+
+def provider_names() -> str:
+    """The vendors, for a sentence shown to whoever named one we lack."""
+    names = [spec.label for spec in _SPECS.values()]
+    return ", ".join(names[:-1]) + f" or {names[-1]}" if len(names) > 1 else names[0]
 
 # A key is a printable token. Anything else is refused before it goes near a
 # request header, where a newline would be a header injection.
@@ -107,18 +117,26 @@ class Redactor:
             return bool(self._secrets)
 
 
-def probe_models(base_url: str, api_key: str, *, timeout: float = 15.0) -> None:
+def probe_models(base_url: str, api_key: str, *, timeout: float = 15.0,
+                 style: str = "bearer") -> None:
     """One cheap request that a key must pass before it is kept.
 
-    GET /models is the lightest authenticated call both vendors offer. A
+    GET /models is the lightest authenticated call these vendors offer. A
     rejected key raises with a sentence and no body, since the body is where a
     vendor might echo the header. Held as a module-level name so a check can
     stand a fake in for the network.
+
+    Anthropic takes a bearer key at /chat/completions and a different pair of
+    headers at /models, where its list is the native API rather than the
+    compatibility shim. A bearer token there reaches the federated-identity
+    validator instead, which turns every good key into "invalid bearer token"
+    and refuses the lot.
     """
-    req = urllib.request.Request(
-        f"{base_url.rstrip('/')}/models",
-        headers={"Authorization": f"Bearer {api_key}"},
-    )
+    if style == "anthropic":
+        headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+    else:
+        headers = {"Authorization": f"Bearer {api_key}"}
+    req = urllib.request.Request(f"{base_url.rstrip('/')}/models", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             json.loads(resp.read().decode("utf-8"))
@@ -160,15 +178,16 @@ def validate_key(provider: str, api_key: str, models: dict | None) -> dict:
     """
     provider = str(provider or "").strip().lower()
     if provider not in PROVIDERS:
-        raise ValueError("provider must be openai or gemini")
+        raise ValueError(f"provider must be one of {provider_names()}")
     api_key = str(api_key or "").strip()
     if not KEY_SHAPE.match(api_key):
         raise ValueError("that does not read as an API key")
     chosen = choose_models(provider, models)
-    base_url = PROVIDERS[provider]["base_url"]
+    spec = PROVIDERS[provider]
+    base_url = spec["base_url"]
     # Looked up by name at call time, so a check can replace it.
     probe = globals()["probe_models"]
-    probe(base_url, api_key)
+    probe(base_url, api_key, style=spec["probe_style"])
     return {"provider": provider, "key": api_key, "base_url": base_url,
             "models": chosen}
 

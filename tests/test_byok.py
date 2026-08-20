@@ -69,10 +69,12 @@ def section(name: str) -> None:
 # ------------------------------------------------------------- stand-ins
 
 PROBED: list[tuple[str, str]] = []
+PROBE_STYLES: list[str] = []
 
 
-def fake_probe(base_url: str, api_key: str, **_) -> None:
+def fake_probe(base_url: str, api_key: str, *, style: str = "bearer", **_) -> None:
     PROBED.append((base_url, api_key))
+    PROBE_STYLES.append(style)
     if api_key != GOOD_KEY:
         raise ValueError("the provider rejected that key")
 
@@ -151,8 +153,11 @@ def validation_checks() -> None:
     check("and nothing is held", server.KEYS.get(sid) is None)
     check("the probe was asked, at the openai base", PROBED[-1] == (byok.PROVIDERS["openai"]["base_url"], BAD_KEY))
 
-    status, body = server.admit_key({"provider": "anthropic", "api_key": GOOD_KEY}, sid, cookie)
-    check("an unknown provider is a 400", status == 400 and "openai or gemini" in body["error"])
+    status, body = server.admit_key({"provider": "acme-labs", "api_key": GOOD_KEY}, sid, cookie)
+    check("an unknown provider is a 400", status == 400 and "must be one of" in body["error"],
+          str(body))
+    check("and the refusal names the vendors on offer",
+          "Claude" in body["error"] and "OpenAI" in body["error"], str(body))
     status, body = server.admit_key({"provider": "openai", "api_key": "short"}, sid, cookie)
     check("a key that does not read as one is a 400", status == 400)
     status, body = server.admit_key({"provider": "openai", "api_key": "sk-with-newline\nHeader: x" + "a" * 20}, sid, cookie)
@@ -179,6 +184,64 @@ def validation_checks() -> None:
     status2 = server.byo_status(sid)
     check("GET status has the same shape, plus the offer, and no key",
           status2["attached"] and "providers" in status2 and GOOD_KEY not in json.dumps(status2))
+    section("attach: every vendor on the shelf")
+    # Each one is reachable, priced, and probed the way that vendor wants.
+    # A default nobody can price would leave the ceiling resting on the
+    # unknown-model fallback rather than on the model actually being called.
+    from crucible.providers import RATES as _RATES
+
+    for name, spec in byok.PROVIDERS.items():
+        vsid = f"sid-{name}"
+        before = len(PROBED)
+        status, body = server.admit_key(
+            {"provider": name, "api_key": GOOD_KEY}, vsid, server.issue_session())
+        check(f"{name}: a good key attaches", status == 200, str(body))
+        check(f"{name}: the probe went to that vendor's base",
+              len(PROBED) == before + 1 and PROBED[-1][0] == spec["base_url"])
+        check(f"{name}: every default model is priced",
+              all(m in _RATES for m in spec["defaults"].values()),
+              str([m for m in spec["defaults"].values() if m not in _RATES]))
+        check(f"{name}: every offered model is priced",
+              all(m in _RATES for m in spec["models"]))
+        check(f"{name}: the answer never carries the key",
+              GOOD_KEY not in json.dumps(body))
+        server.KEYS.detach(vsid)
+
+    # Anthropic takes a bearer key at chat/completions and a different pair of
+    # headers at /models. Probing it with a bearer token reaches the federated
+    # identity validator instead, which refuses every good key.
+    before = len(PROBED)
+    server.admit_key({"provider": "anthropic", "api_key": GOOD_KEY},
+                     "sid-anthropic-style", server.issue_session())
+    check("anthropic is probed with its own headers rather than a bearer token",
+          PROBE_STYLES[-1] == "anthropic", PROBE_STYLES[-1])
+    check("and the vendors that take a bearer token still get one",
+          all(byok.PROVIDERS[n]["probe_style"] == "bearer"
+              for n in ("openai", "gemini", "xai", "deepseek", "openrouter")))
+    server.KEYS.detach("sid-anthropic-style")
+
+    check("a claude model is refused to a vendor that does not sell it",
+          server.admit_key({"provider": "openai", "api_key": GOOD_KEY,
+                            "models": {"planner": "claude-opus-5"}},
+                           "sid-x", server.issue_session())[0] == 400)
+
+    # A rate of zero prices a model's calls at nothing, so BudgetExceeded can
+    # never fire for it and the ceiling someone set is decoration. The table is
+    # hand-maintained against vendor pricing pages, so the shape of a typo that
+    # would disable a cap is worth a check of its own.
+    free = [m for m, (i, o) in _RATES.items() if i <= 0 or o <= 0]
+    check("no model is priced at nothing", not free, str(free))
+    check("output is dearer than input everywhere, as vendors price it",
+          all(o > i for i, o in _RATES.values()))
+    from crucible.providers import Budget as _Budget
+
+    spent = _Budget(ceiling_usd=100.0)
+    known = spent._price("gpt-5-mini", 1_000_000, 1_000_000)
+    unknown = spent._price("a-model-nobody-has-heard-of", 1_000_000, 1_000_000)
+    check("an unpriced model costs at least as much as any priced one",
+          unknown >= max(spent._price(m, 1_000_000, 1_000_000) for m in _RATES),
+          f"{unknown} vs known {known}")
+
     held = server.KEYS.get(sid)
     check("the table holds the key in memory with the session's expiry",
           held is not None and held["key"] == GOOD_KEY

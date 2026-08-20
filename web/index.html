@@ -3,26 +3,34 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Crucible: adversarial verification for AI code review</title>
-<meta name="description" content="AI finds bugs. Most of them are wrong. Crucible sends every finding to independent verifiers that try to tear it down, and reports the ones still standing. Run it here, or take it from GitHub.">
+<title>Crucible: one run raised 16 findings and kept 9</title>
+<meta name="description" content="Crucible reviews a codebase with parallel bug hunters, then sends every finding to three verifiers that work to disprove it. One recorded run raised 16 findings and kept 9, for 27 US cents.">
 <link rel="canonical" href="https://crucible.flow-through.com.au/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Crucible">
-<meta property="og:title" content="Crucible: adversarial verification for AI code review">
-<meta property="og:description" content="AI finds bugs. Most of them are wrong. Every finding is attacked by independent verifiers before it is reported, and the run lands in a hash-chained ledger you can check yourself.">
+<meta property="og:title" content="Crucible: one run raised 16 findings and kept 9">
+<meta property="og:description" content="Every finding goes to three independent verifiers that work to disprove it, and two have to agree it holds before you see it. Every run is written to a hash chain you can check line by line.">
 <meta property="og:url" content="https://crucible.flow-through.com.au/">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Crucible: adversarial verification for AI code review">
-<meta name="twitter:description" content="AI finds bugs. Most of them are wrong. This proves which ones aren't.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23FBFAF7'/><path d='M2.5 8.2 L13.5 8.2' stroke='%238C1515' stroke-width='1.4'/></svg>">
+<meta property="og:image" content="https://crucible.flow-through.com.au/static/card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Crucible: 16 findings raised, 9 kept, with one struck-through claim.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Crucible: one run raised 16 findings and kept 9">
+<meta name="twitter:description" content="Every finding goes to three verifiers that work to disprove it. Two have to agree before you see it.">
+<meta name="twitter:image" content="https://crucible.flow-through.com.au/static/card.png">
+<meta name="theme-color" content="#14130E">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2314130E'/><path d='M2 8.4 L14 8.4' stroke='%238C1515' stroke-width='2.6'/></svg>">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="landing">
 
+<a class="skip" href="#main">Skip to the tool</a>
+
 <header class="head">
   <div class="in">
     <a class="wm" id="home" href="/">Crucible</a>
-    <span class="thesis">AI finds bugs. Most of them are wrong. This proves which ones aren&rsquo;t.</span>
+    <span class="thesis">Every finding here survived three attempts to disprove it.</span>
     <span class="id mono" id="runid"></span>
     <a class="hlink" id="about-open" href="#">what is this</a>
     <a class="hlink" href="https://github.com/BlakeR-M/crucible">GitHub</a>
@@ -33,22 +41,23 @@
 <div class="intro" id="intro" hidden>
   <div class="intro-card" role="dialog" aria-modal="true" aria-labelledby="intro-h">
     <div class="intro-kicker">An info page. Skip it any time.</div>
-    <h1 id="intro-h">Crucible</h1>
-    <p><b>AI finds bugs. Most of them are wrong. This proves which ones
-    aren&rsquo;t.</b></p>
-    <p>Ask a model to review code and it hands you findings that sound right.
-    Plenty are wrong. Crucible sends every finding to three separate verifiers
-    whose job is to tear it down, and reports the ones still standing.</p>
-    <p>One recorded run against the bundled demo project raised 16 findings
-    and reported 9. It cost 27 US cents. The full ledger is in the repo, and
-    one command replays every decision in it on your machine.</p>
-    <p>Every agent action is checked against a written policy before it runs,
-    and the whole run lands in a hash-chained ledger you can download from
-    this page.</p>
-    <p>This deployment runs a free stand-in model, so have a play. Attach your
-    own OpenAI or Gemini key and it reviews for real, including a public
-    repository of yours pasted straight into the page. The code is
-    standard-library Python, and it runs on your machine too:</p>
+    <h2 id="intro-h">Crucible</h2>
+    <p><b>One run of Crucible raised 16 findings and kept 9.</b></p>
+    <p>The other seven met three verifiers whose instruction was to disprove
+    them, and a verifier that stays unsure counts the same as one that
+    disproved it. Two of three decide, so a finding reaches you on agreement
+    rather than on a hunch.</p>
+    <p>What survives comes with steps you can run. That recorded run cost 27
+    US cents, and its full log sits in the repository where one command
+    replays every decision in it on your machine.</p>
+    <p>A written policy gates every agent action before it runs. Every run is
+    written to a hash chain, and your browser checks that chain here without
+    asking this server to vouch for it.</p>
+    <p>This deployment runs a stand-in model, so the arena is free to play
+    with. Attach a key from any of six vendors and it reviews with a live
+    model, including a public repository you paste into the page. The code is
+    Python with nothing but the standard library, and it runs on your machine
+    too:</p>
     <p class="intro-repo"><a href="https://github.com/BlakeR-M/crucible">github.com/BlakeR-M/crucible</a></p>
     <div class="intro-actions">
       <button id="intro-go" type="button">Back to the tool</button>
@@ -56,7 +65,7 @@
   </div>
 </div>
 
-<div class="split">
+<main class="split" id="main">
 
   <!-- What the agents are actually doing. This is the whole page. -->
   <section class="work">
@@ -77,24 +86,42 @@
 
     <div class="stage" id="stage">
       <div class="idle" id="idle">
-        <p class="kicker">An adversarial code review arena &middot; MIT &middot; Python, standard library only</p>
-        <h1 class="hero-h">AI finds bugs.<br>
-          <span class="wrong">Most of them are wrong.</span><br>
-          <em>This proves which ones aren&rsquo;t.</em></h1>
-        <p class="lede">Point Crucible at a codebase and bug hunters spread out
-           through it, blind to each other. Every finding they raise is handed
-           to three verifiers told to tear it down, and uncertainty counts as
-           refutation. What survives carries a reproduction, and the whole run
-           lands in a hash-chained ledger you can verify in this browser.</p>
+        <p class="kicker">Code review that has to prove itself</p>
+        <h1 class="hero-h">One run raised 16 findings<br>
+          and kept <span class="wrong">9</span>.</h1>
+        <p class="lede">Seven stopped at verification. Every finding goes to
+           three verifiers that work to disprove it, and two have to agree it
+           holds before it reaches you. The nine that came through arrive with
+           steps you can run.</p>
         <div class="hero-acts">
-          <button type="button" id="demo-go">See how it works</button>
-          <span class="hero-note">a real review of a small booking app seeded
-                with bugs and traps, narrated step by step</span>
+          <button type="button" id="demo-go">Run the demo</button>
+          <span class="hero-note">a live run over a small booking app with real
+                defects planted in it, narrated as it goes</span>
         </div>
-        <p class="proof">One recorded run with live models raised 16 findings
-           and proved 9 of them, for 27 US cents.
-           <a href="https://github.com/BlakeR-M/crucible/tree/main/docs/evidence">That
-           ledger is in the repo</a>, and one command replays every decision in it.</p>
+        <!-- A still of the run view. The strikethrough on a disproved claim is
+             the thing worth seeing, and it used to be unreachable until you
+             committed to a whole run. No script, no network, no image file. -->
+        <figure class="still" aria-labelledby="still-cap">
+          <div class="still-score">
+            <span><b>13</b> found</span>
+            <span class="sep">&rarr;</span>
+            <span class="k"><b>4</b> disproved</span>
+            <span class="sep">&rarr;</span>
+            <span><b>9</b> proven</span>
+          </div>
+          <div class="still-claim">
+            <span class="st">Idempotency key omits the time of day</span>
+            <span class="wh">bookings/api.py:69 &nbsp; high</span>
+            <span class="ru">Proven &nbsp;<i>3 of 3 could not disprove it</i></span>
+          </div>
+          <div class="still-claim dead">
+            <span class="st">Tax applied before the discount on cancelled bookings</span>
+            <span class="wh">bookings/invoicing.py:118 &nbsp; medium</span>
+            <span class="ru">Disproved &nbsp;<i>compute_tax reads taxable, not subtotal</i></span>
+          </div>
+          <figcaption id="still-cap">What a finished run looks like. The struck
+            line is a finding the verifiers took apart.</figcaption>
+        </figure>
         <div id="notice-slot"></div>
         <form class="repo" id="repo" autocomplete="off">
           <label for="repo-url">Or point it at a public repository</label>
@@ -106,16 +133,15 @@
           <p class="hint" id="repo-hint"></p>
         </form>
         <details class="byo-wrap" id="byo-wrap">
-          <summary>Attach your own key to run against a live model</summary>
+          <summary>Attach a key and run it against a live model</summary>
           <form class="byo" id="byo" autocomplete="off">
             <p class="hint">The key stays in this server&rsquo;s memory for this
-               session only: it is dropped when you forget it or the session
-               expires, and it is written to nothing.</p>
+               session alone. It is dropped when you forget it or the session
+               ends, and it is written to nothing.</p>
             <div class="row" id="byo-form">
-              <select id="byo-provider" aria-label="Provider">
-                <option value="openai">OpenAI</option>
-                <option value="gemini">Gemini</option>
-              </select>
+              <!-- Filled from /api/tasks, so the vendor list has one home in
+                   providers.py rather than a copy here that drifts. -->
+              <select id="byo-provider" aria-label="Provider"></select>
               <input id="byo-key" type="password" autocomplete="off" spellcheck="false"
                      placeholder="API key">
               <input id="byo-ceiling" type="number" inputmode="decimal" min="0.01" step="0.05"
@@ -130,7 +156,10 @@
           </form>
         </details>
         <p class="take">Run it on your own machine:
-           <a class="mono" href="https://github.com/BlakeR-M/crucible">github.com/BlakeR-M/crucible</a></p>
+           <a class="mono" href="https://github.com/BlakeR-M/crucible">github.com/BlakeR-M/crucible</a>
+           <span class="meta">MIT licensed. Python, standard library only. The
+             recorded run and its full log are in
+             <a href="https://github.com/BlakeR-M/crucible/tree/main/docs/evidence">docs/evidence</a>.</span></p>
       </div>
       <div id="thread"></div>
       <div id="closing"></div>
@@ -140,7 +169,7 @@
       <span id="tick-state">idle</span>
       <span class="dag" id="tick-dag"></span>
       <span class="right">
-        <span class="fig" id="tick-spend">$0.0000</span>
+        <span class="fig" id="tick-spend">0.0c</span>
         <span class="fig" id="tick-calls">0 calls</span>
         <span class="fig" id="tick-reads">0 reads</span>
         <span class="fig" id="tick-clock">0:00</span>
@@ -157,7 +186,7 @@
     </div>
 
   </section>
-</div>
+</main>
 
 <script src="/static/app.js"></script>
 <script>

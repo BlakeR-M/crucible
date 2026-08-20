@@ -1,7 +1,11 @@
 # Never. The arena reads a key from the environment on the host.
+#
+# There was a `!demo_target/**` line here, and being the last rule matching
+# that directory it cancelled both guards above for the one folder the agents
+# actually run in: `demo_target/.env` was committable. Nothing needed the
+# negation, since a file already tracked is unaffected by these rules.
 .env
 *.env
-!demo_target/**
 
 # Run ledgers are written at runtime and are per-deployment. The published
 # evidence ledger lives in docs/evidence/, deliberately outside this rule.
@@ -9,6 +13,14 @@ runs/**/*.jsonl
 
 # Scratch the agents are permitted to write into.
 demo_target/.crucible-scratch/
+
+# Working notes and local tooling. These were held in .git/info/exclude, which
+# lives in one working copy and reaches no clone and no CI run, so the pre-ship
+# audit had nothing keeping it back anywhere else.
+AUDIT.md
+.claude/
+.railwayignore
+runs/quarantine/
 
 __pycache__/
 *.pyc
@@ -19,6 +31,16 @@ build/
 dist/
 .DS_Store
 Thumbs.db
+
+# Editor and tool output.
+.vscode/
+.idea/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+node_modules/
+*.log
 
 # Benchmark ledgers for runs still in progress. The completed arm-X.json
 # carries every reply anyway, so a half-written run adds nothing.

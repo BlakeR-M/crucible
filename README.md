@@ -2,13 +2,14 @@
 
 [![ci](https://github.com/BlakeR-M/crucible/actions/workflows/ci.yml/badge.svg)](https://github.com/BlakeR-M/crucible/actions/workflows/ci.yml)
 
-AI finds bugs. Most of them are wrong. This proves which ones aren't.
+Crucible reviews code with a team of agents and puts every finding they raise
+in front of three independent verifiers before it reaches you.
 
-Agents review a codebase, and every finding they raise is handed to three
-independent verifiers whose only job is to destroy it. Only survivors are
-reported. The number this makes largest is not how many defects were found, it
-is **how few survived**. A recorded run against the demo target raised sixteen
-findings and reported nine; the seven it threw away are the point.
+Each verifier is asked to disprove the finding, a verifier that comes back
+unsure counts as a refutation, and two of the three settle it. A recorded run
+against the demo target raised sixteen findings and **kept nine**. The other
+seven were refuted on the way, and the run keeps that count on screen the
+whole time.
 
 ```
 09 / 16  SURVIVED
@@ -86,6 +87,12 @@ purpose, with defects deliberately planted in it and an answer key checked in
 beside them, so the arena's precision and recall are measurable rather than
 asserted.
 
+That answer key sits inside the tree the hunters read, which would make every
+score meaningless if one of them opened it. The policy holds it back by name,
+the refusal is written to the ledger like any other, and the check that proves
+it lives in `tests/test_core.py` under "the answers are out of reach of the
+hunters".
+
 Saying that up front matters, because the interesting claims here are the ones
 that are easy to fake. Anything can print "3 agents working". The parts worth
 looking at are the ones that fail closed when something goes wrong, and those
@@ -98,9 +105,9 @@ Read this section, then go and try to break it.
 ## The argument
 
 Generating findings is nearly worthless. A language model asked to find bugs
-will always find bugs, and a great many of them will be confident, articulate,
-and wrong. Anyone who has pointed a model at a codebase knows this. The output
-looks like work and costs the reader more time than it saves.
+will always find bugs, and plenty of them will read well and be wrong anyway.
+Anyone who has pointed a model at a codebase knows this. The output looks like
+work and costs the reader more time than it saves.
 
 So the entire design puts its weight on the second half. Every finding a hunter
 raises is handed to **three independent verifiers**, each told to refute it,
@@ -110,9 +117,8 @@ or fails to answer counts against the finding it was judging, because the wrong
 direction to fail in is the one where an unverified claim gets reported because
 a process died.
 
-That is why the kill count has permanent space on screen and never collapses.
-A system that shows how much of its own output it threw away is making the
-argument structurally instead of in copy.
+That is why the refuted count keeps its own space on screen for the whole run,
+where anyone watching can see how much of the tool's own output it threw away.
 
 ---
 
@@ -229,8 +235,8 @@ in under a dime.
 
 ## Sovereign deployment
 
-The single biggest blocker to AI adoption in Australian government is not
-capability. It is that the data cannot leave the boundary.
+Australian government work often carries a hard requirement that the data
+stays inside the boundary, which rules out a hosted model.
 
 Crucible speaks the OpenAI chat completions API through a provider interface, so
 pointing it at a local server is a configuration change rather than a rewrite.
@@ -425,8 +431,8 @@ thing, orchestrator and policy and ledger included, without spending anything.
 | `OPENAI_API_KEY` | none | Required for paid runs; read when a run starts |
 | `CRUCIBLE_ENV_FILE` | `.env` at the repo root | File the key is read from when it is absent from the environment |
 | `CRUCIBLE_OFFLINE` | unset | `1` runs everything with a local stand-in model and spends nothing |
-| `CRUCIBLE_PROVIDER` | `openai` | `gemini` switches the interface to Google's OpenAI-compatible endpoint |
-| `GEMINI_API_KEY` | none | Read when `CRUCIBLE_PROVIDER=gemini` |
+| `CRUCIBLE_PROVIDER` | `openai` | Also `anthropic`, `gemini`, `xai`, `deepseek`, `openrouter`. Each speaks the OpenAI chat shape, so the arena changes a base URL rather than an implementation |
+| `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY` | none | Read for the matching `CRUCIBLE_PROVIDER` |
 | `CRUCIBLE_MODEL_PLANNER` / `_WORKER` / `_VERIFIER` | per provider | Per-seat model overrides for the interface |
 | `PORT` | `8420` | Listen port |
 | `CRUCIBLE_SECRET` | random per boot | Session cookie signing key |

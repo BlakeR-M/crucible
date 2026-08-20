@@ -34,7 +34,7 @@ from bookings.service import BookingService
 DAY = date(2026, 9, 14)
 NEXT_DAY = DAY + timedelta(days=1)
 
-OWNER = Actor(id="act_owner", name="Blake", role="owner")
+OWNER = Actor(id="act_owner", name="Dana", role="owner")
 AGENT = Actor(id="act_agent", name="Sam", role="agent")
 VIEWER = Actor(id="act_viewer", name="Robin", role="viewer")
 

@@ -703,7 +703,9 @@ def byo_status(sid: str) -> dict:
         "enabled": BYO_ENABLED,
         "run_ceiling_usd": BYO_RUN_CEILING_USD,
         "run_ceiling_max_usd": BYO_RUN_CEILING_MAX_USD,
-        "providers": {name: {"models": list(spec["models"]),
+        "providers": {name: {"label": spec["label"],
+                             "key_hint": spec["key_hint"],
+                             "models": list(spec["models"]),
                              "defaults": {t.value: m for t, m in spec["defaults"].items()}}
                       for name, spec in byok.PROVIDERS.items()},
     }
@@ -800,7 +802,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             kinds = {".css": "text/css; charset=utf-8",
                      ".js": "application/javascript; charset=utf-8",
-                     ".svg": "image/svg+xml"}
+                     ".svg": "image/svg+xml",
+                     # The link-preview card. A crawler fetching og:image and
+                     # finding application/octet-stream declines to show it.
+                     ".png": "image/png",
+                     ".ico": "image/x-icon"}
             # The URL prefix and the directory name are both "static", so the
             # prefix is stripped and then put back rather than assumed away.
             self._file(f"static/{name}",

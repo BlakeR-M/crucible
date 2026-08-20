@@ -250,7 +250,7 @@ def surface_checks() -> None:
     check("a listed tool with good arguments is permitted",
           bool(surface.check("list_findings", {"which": "standing"})))
     check("an unlisted tool is refused",
-          not surface.check("send_email", {"to": "blake@example.com"}))
+          not surface.check("send_email", {"to": "someone@example.com"}))
     check("the refusal names the tool and the surface",
           "send_email" in surface.check("send_email", {}).reason
           and "visitor" in surface.check("send_email", {}).reason)

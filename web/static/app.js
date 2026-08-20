@@ -28,6 +28,13 @@ const S = {
 };
 
 const money = (n) => '$' + (n || 0).toFixed(4);
+/* The ticker reads at a glance while it climbs, so cents below a dollar and
+ * two decimals above it. The four-decimal figure stays on the closing panel,
+ * where someone auditing a run wants every digit. */
+const spendShort = (n) => {
+  const v = n || 0;
+  return v < 1 ? `${(v * 100).toFixed(1)}c` : `$${v.toFixed(2)}`;
+};
 const short = (p) => !p ? '' : String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
 const ROMAN = ['i', 'ii', 'iii', 'iv', 'v'];
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
@@ -49,18 +56,20 @@ function clock() {
  * script pretending. Steps only move forward. */
 
 const NARRATE = [
-  'The policy comes first: these agents may read the code, write only ' +
-    'scratch, and run only the test commands. Everything else is refused ' +
-    'before it executes.',
-  'The planner reads the codebase and cuts the ground into lanes.',
-  'Hunters spread out, one per lane, blind to each other, so four copies ' +
-    'of the same easy bug cannot pass for a review.',
-  'Findings start landing. Each one is a claim, and a claim has earned ' +
-    'nothing yet.',
-  'Now every finding is attacked: three verifiers each, told to refute it, ' +
-    'with uncertainty counting as refutation. Two of three decide.',
-  'The whole time, a probe has been genuinely trying to escape the ' +
-    'sandbox. Refused, and every refusal is in the record.',
+  'Every tool call goes past a written policy before it runs. These agents ' +
+    'get to read the code, write to a scratch folder, and run the test ' +
+    'commands. Anything else stops at that check.',
+  'The planner reads the codebase and divides it into lanes.',
+  'Each hunter works one lane, sealed off from the others, so the findings ' +
+    'cover separate parts of the codebase rather than piling onto one easy bug.',
+  'The first findings are coming in. They are claims at this point, and ' +
+    'every one of them still has to be checked.',
+  'Every finding now goes to three verifiers, each one asked to prove it ' +
+    'wrong. A verifier that comes back unsure counts as a refutation. Two of ' +
+    'the three settle it.',
+  'A probe has been running alongside the hunters the whole time, asking for ' +
+    'tools outside the allowed list. Every attempt stops at the policy check, ' +
+    'and every attempt is written to the ledger.',
   '', // written by onFinished with the run's own numbers
 ];
 
@@ -142,7 +151,7 @@ function reset(runId) {
   $('idle').style.display = 'none';
   $('thread').innerHTML = ''; $('closing').innerHTML = '';
   ['s-found', 's-out', 's-keep'].forEach(id => $(id).textContent = '0');
-  $('tick-spend').textContent = '$0.0000'; $('tick-calls').textContent = '0 calls';
+  $('tick-spend').textContent = '0.0c'; $('tick-calls').textContent = '0 calls';
   $('tick-reads').textContent = '0 reads'; $('tick-dag').textContent = '';
   $('tick-clock').textContent = '0:00';
   $('ticker').hidden = false; $('after').hidden = true;
@@ -207,7 +216,7 @@ function node(parentKids, { name, role, live }) {
 function onProvider(e) {
   // Arrives before there is a planner to hang it on; onStart writes it.
   S.provider = e;
-  $('tick-state').textContent = { visitor: 'running on your key', operator: 'running on the house key',
+  $('tick-state').textContent = { visitor: 'running on your key', operator: "running on this deployment's key",
                                   offline: 'running the stand-in model' }[e.provider_kind] || 'starting';
 }
 
@@ -216,7 +225,7 @@ function onStart(e) {
   root.acts.append(mkAct('task', e.task || ''));
   const kind = e.provider_kind || (S.provider && S.provider.provider_kind);
   if (kind) {
-    const words = { visitor: 'your key', operator: 'the house key', offline: 'the stand-in model' };
+    const words = { visitor: 'your key', operator: "this deployment's key", offline: 'the stand-in model' };
     const m = e.models || (S.provider && S.provider.models) || {};
     root.acts.append(mkAct('model', (words[kind] || kind) +
       (m.planner ? `  ${m.planner} plans, ${m.worker} hunts, ${m.verifier} verifies` : '')));
@@ -290,7 +299,7 @@ function onAgent(e) {
 function onThought(e) {
   S.calls += 1; S.spend += e.cost || 0;
   $('tick-calls').textContent = S.calls + ' calls';
-  $('tick-spend').textContent = money(S.spend);
+  $('tick-spend').textContent = spendShort(S.spend);
   const a = S.agents.get(e.agent);
   if (a) a.meta.textContent = 'step ' + ((e.step || 0) + 1);
 }
@@ -431,16 +440,17 @@ function onFinished(e) {
   });
 
   const killed = e.raised - e.survived;
-  narrate(7, `${Say(e.survived)} survived and ${say(killed)} were destroyed. ` +
-    'The full ledger is below: verify the chain without leaving this browser.');
+  narrate(7, `${Say(e.survived)} held up and ${say(killed)} ` +
+    `${killed === 1 ? 'was' : 'were'} disproved. The ledger is below, and you ` +
+    'can check the hash chain here in the browser.');
   const box = el('div', 'closing');
-  box.append(el('h2', null, 'What survived'));
+  box.append(el('h2', null, 'What came through'));
   const p = el('p');
-  p.append(el('span', null, `${Say(e.raised)} possible bug${e.raised === 1 ? '' : 's'} ` +
-    `${e.raised === 1 ? 'was' : 'were'} found. `));
-  p.append(el('em', null, `${Say(killed)} ${killed === 1 ? 'was' : 'were'} disproved and thrown away. `));
-  p.append(el('span', null, `${Say(e.survived)} ${e.survived === 1 ? 'is' : 'are'} left, ` +
-    `each with a reproduction you can check.`));
+  p.append(el('span', null, `The hunters raised ${say(e.raised)} possible ` +
+    `bug${e.raised === 1 ? '' : 's'}. `));
+  p.append(el('em', null, `Verification disproved ${say(killed)} of them. `));
+  p.append(el('span', null, `That leaves ${say(e.survived)}, ` +
+    `${e.survived === 1 ? 'with' : 'each with'} a reproduction you can run.`));
   box.append(p);
 
   const rows = el('div', 'rows');
@@ -489,13 +499,13 @@ async function verifyChain(runId, out) {
      re-serialisation, which is what keeps this correct for every float and
      escape the file can carry. The policy replay is the CLI's half. */
   out.className = 'verify-out';
-  out.textContent = 'fetching the ledger…';
+  out.textContent = 'Fetching the ledger…';
   let text;
   try {
     const r = await fetch('/api/ledger/' + runId);
-    if (!r.ok) { out.textContent = 'the ledger is out of reach just now'; return; }
+    if (!r.ok) { out.textContent = 'The ledger is out of reach just now.'; return; }
     text = await r.text();
-  } catch { out.textContent = 'the ledger is out of reach just now'; return; }
+  } catch { out.textContent = 'The ledger is out of reach just now.'; return; }
   const lines = text.split('\n').filter(l => l.trim());
   const enc = new TextEncoder();
   const fail = (msg) => { out.className = 'verify-out broke'; out.textContent = msg; };
@@ -517,9 +527,9 @@ async function verifyChain(runId, out) {
     if (entry.prev !== prev) { fail(`CHAIN BROKEN at entry ${i}: does not follow the entry before it`); return; }
     prev = stored;
   }
-  out.textContent = `chain intact: ${lines.length} entries recomputed in this browser, ` +
-    `head ${prev.slice(0, 16)}… The chain is this half of the check; ` +
-    `“crucible verify” on your machine replays the policy decisions too.`;
+  out.textContent = `Chain intact. ${lines.length} entries recomputed here in your ` +
+    `browser, head ${prev.slice(0, 16)}… That covers the hashes. Run ` +
+    `“crucible verify” on your machine to replay the policy decisions as well.`;
 }
 
 /* ------------------------------------------------------------ repo form */
@@ -563,11 +573,12 @@ const BYO = { enabled: false, ceiling: 1, max: 5, attached: false };
 function offlineNotice() {
   const note = $('offline-notice');
   if (!note) return;
-  note.textContent = 'This deployment runs a stand-in model: the planner, hunters, verifiers, ' +
-    'policy and ledger are all real, and the completions are scripted.' +
+  note.textContent = 'This deployment answers with a stand-in model. The planner, hunters, ' +
+    'verifiers, policy checks and ledger all run for real, and the model replies come ' +
+    'from a script.' +
     (BYO.enabled && !BYO.attached
-      ? ' Attach your own key below and it reviews with a live model.'
-      : ' Live model runs switch on when the operator supplies a provider key.');
+      ? ' Attach your own key below to run it against a live model.'
+      : ' A provider key on the server switches live model runs on.');
 }
 
 function byoHint(text, said) {
@@ -576,8 +587,33 @@ function byoHint(text, said) {
   h.classList.toggle('said', !!said);
 }
 
+/* The vendor list comes from the server, which reads it from providers.py, so
+ * adding a vendor there puts it in this menu without a second edit here. */
+function byoProviders(providers) {
+  const sel = $('byo-provider');
+  const names = Object.keys(providers || {});
+  if (!names.length || sel.dataset.filled === String(names.length)) return;
+  const chosen = sel.value;
+  sel.innerHTML = '';
+  names.forEach(name => {
+    const o = el('option', null, providers[name].label || name);
+    o.value = name;
+    sel.append(o);
+  });
+  sel.dataset.filled = String(names.length);
+  if (chosen && names.includes(chosen)) sel.value = chosen;
+  byoKeyHint(providers);
+  sel.addEventListener('change', () => byoKeyHint(providers));
+}
+
+function byoKeyHint(providers) {
+  const spec = providers[$('byo-provider').value];
+  if (spec && spec.key_hint) $('byo-key').placeholder = `API key, ${spec.key_hint}`;
+}
+
 function byoRender(d) {
   BYO.enabled = !!d.enabled;
+  if (d.providers) byoProviders(d.providers);
   BYO.ceiling = d.run_ceiling_usd || BYO.ceiling;
   BYO.max = d.run_ceiling_max_usd || BYO.max;
   BYO.attached = !!d.attached;
@@ -620,7 +656,7 @@ $('byo').addEventListener('submit', async (e) => {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { byoHint(d.error || 'The key was kept out. Check it and try again.', true); return; }
-    byoHint('Attached. Runs and the conversation now use your key.');
+    byoHint('Attached. Runs now use your key.');
     byoRender({ ...d, enabled: true });
   } catch {
     byoHint('The server is out of reach just now. Try again in a moment.', true);
@@ -649,7 +685,7 @@ async function startDemo(btn) {
       body: JSON.stringify({ task: 'full' }),
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) { hint(d.error || 'The arena declined that one. Try again in a moment.', true); return; }
+    if (!r.ok) { hint(d.error || 'The server turned that request down. Try again in a moment.', true); return; }
     rememberRun(d.run_id);
     attach(d.run_id);
   } catch {
@@ -670,14 +706,14 @@ $('repo').addEventListener('submit', async (e) => {
     return;
   }
   $('repo-go').disabled = true;
-  hint('Asking the arena for a slot.');
+  hint('Starting the run.');
   try {
     const r = await fetch('/api/run', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ repo_url: url, task: 'full' }),
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) { hint(d.error || 'The arena declined that one. Try again in a moment.', true); return; }
+    if (!r.ok) { hint(d.error || 'The server turned that request down. Try again in a moment.', true); return; }
     hint('');
     rememberRun(d.run_id);
     attach(d.run_id);
