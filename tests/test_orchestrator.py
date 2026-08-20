@@ -338,6 +338,18 @@ def survival_checks(tmp: Path) -> None:
     check("and says it was halted", bool(report.halted))
     check("and the ledger it wrote still verifies", ledger.verify() is None)
 
+    # The server names a run when it admits it, and that name is the ledger's
+    # filename and the download route. The orchestrator must carry the name
+    # through rather than inventing a second one.
+    provider = RoleProvider(lanes=1, findings_per_lane=1,
+                            verdicts=[True, True, True])
+    orchestrator, events, ledger = build(tmp, provider, name="named")
+    orchestrator.run_id = "named-by-caller"
+    report = orchestrator.run("t")
+    check("a caller-named run keeps its name through record and report",
+          report.run_id == "named-by-caller"
+          and ledger.entries()[0]["payload"]["run_id"] == "named-by-caller")
+
 
 def policy_checks(tmp: Path) -> None:
     section("policy inside a run")

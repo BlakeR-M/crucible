@@ -1,5 +1,7 @@
 # Crucible
 
+[![ci](https://github.com/BlakeR-M/crucible/actions/workflows/ci.yml/badge.svg)](https://github.com/BlakeR-M/crucible/actions/workflows/ci.yml)
+
 AI finds bugs. Most of them are wrong. This proves which ones aren't.
 
 Agents review a codebase, and every finding they raise is handed to three
@@ -15,6 +17,15 @@ findings and reported nine; the seven it threw away are the point.
 That run is committed whole: [`docs/evidence/`](docs/evidence/) holds its full
 hash-chained ledger with the method, and one command replays every decision in
 it on your machine.
+
+[Use it in the browser](https://crucible.flow-through.com.au), open and free
+on a stand-in model, or run the whole arena from a fresh clone with no key:
+
+```bash
+git clone https://github.com/BlakeR-M/crucible && cd crucible
+CRUCIBLE_OFFLINE=1 python -m crucible.cli run demo_target --score
+python -m crucible.cli verify docs/evidence/2026-08-17-demo-target-16-raised-9-survived.jsonl
+```
 
 Every agent action is checked against a written policy before it runs, and every
 call and result is written to a hash-chained ledger that someone who does not
@@ -123,7 +134,7 @@ review_policy(workspace) = {
   list_dir       within the workspace
   search         within the workspace
   write_scratch  within .crucible-scratch/ only, 200 KB ceiling
-  run_tests      python, pytest, node, npm only
+  run_tests      python, python3, pytest, node, npm only
   network        refused entirely
 }
 ```
@@ -147,10 +158,11 @@ entry before it, so the file proves its own order and completeness. Editing a
 payload, deleting an entry, inserting one, or swapping two all produce a break,
 and `verify()` names the first sequence number where the chain stops adding up.
 
-You do not have to take the server's word for this. The interface offers the
-ledger for download, and `crucible verify <ledger>` recomputes the whole chain
-and replays every policy decision on your machine, without trusting anything
-the server says. Add `--workspace <dir>` when the reviewed directory is at
+You do not have to take the server's word for this. The interface recomputes
+the whole chain in your browser, one click after a run finishes, and offers
+the ledger for download; `crucible verify <ledger>` then recomputes the chain
+and replays every policy decision on your machine, trusting nothing the
+server says. Add `--workspace <dir>` when the reviewed directory is at
 hand and the replay is rebuilt from it rather than from the policy the file
 recorded. The claim is checkable by the person who doubts it.
 
@@ -283,6 +295,30 @@ crucible models                   # show the seats and reach the endpoint
 crucible run .                    # review; blocks the pipeline if anything survives
 crucible verify runs/abc.jsonl --workspace .
 ```
+
+Or as a pull-request gate, since the exit code is the whole interface:
+
+```yaml
+# .github/workflows/review.yml
+name: crucible
+on: [pull_request]
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install git+https://github.com/BlakeR-M/crucible
+      - run: crucible run .
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+```
+
+A surviving finding fails the job. A run that could not complete fails it
+with a different code (2), so a broken configuration never reads as a clean
+review. `crucible.toml` in the reviewed repository picks the seats and the
+ceiling, which makes the spend per pull request a number you chose.
 
 ### A repository by URL
 
@@ -458,17 +494,17 @@ a weaker argument. Every line that serves this can be read.
 ```bash
 python -m pytest -q                # everything below, plus the demo target's own suite
 
-python tests/test_core.py          # 72
-python tests/test_orchestrator.py  # 120
+python tests/test_core.py          # 73
+python tests/test_orchestrator.py  # 121
 python tests/test_chat.py          # 134
 python tests/test_archive.py       # 102
 python tests/test_cli.py           # 129
 python tests/test_assay.py         # 20
 python tests/test_repo.py          # 126
-python tests/test_byok.py          # 89
+python tests/test_byok.py          # 91
 ```
 
-**792 checks, no network, no spend.** The check files are plain scripts;
+**796 checks, no network, no spend.** The check files are plain scripts;
 `tests/test_suite.py` runs each one under pytest so a pipeline needs one
 command. The orchestrator suite replaces the model
 with a stand-in that answers from the prompt it is given, because a queue of

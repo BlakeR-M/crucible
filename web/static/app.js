@@ -485,13 +485,65 @@ function onFinished(e) {
   box.append(rows);
 
   const link = el('p'); link.style.marginTop = '9px'; link.style.fontSize = 'var(--t-marg)';
-  const a = el('a', null, 'Download the ledger and verify the chain yourself');
+  const a = el('a', null, 'Download the ledger');
   a.href = '/api/ledger/' + e.run_id;
   link.append(a);
-  box.append(link);
+  link.append(el('span', null, ' or '));
+  const vbtn = el('button', 'verify-here', 'verify the chain in this browser');
+  vbtn.type = 'button';
+  link.append(vbtn);
+  const vout = el('p', 'verify-out');
+  vbtn.addEventListener('click', () => {
+    vbtn.disabled = true;
+    verifyChain(e.run_id, vout).finally(() => { vbtn.disabled = false; });
+  });
+  box.append(link, vout);
 
   $('closing').append(box);
   if (BYO.attached) byoRefresh();
+}
+
+/* ----------------------------------------------------------- chain check */
+
+async function verifyChain(runId, out) {
+  /* The same walk `crucible verify` does, recomputed here so the check does
+     not rest on this server's word. Each file line is the canonical
+     serialisation with sorted keys, so the bytes the hash covers are exactly
+     the raw line with its own hash field cut out: byte surgery, never
+     re-serialisation, which is what keeps this correct for every float and
+     escape the file can carry. The policy replay is the CLI's half. */
+  out.className = 'verify-out';
+  out.textContent = 'fetching the ledger…';
+  let text;
+  try {
+    const r = await fetch('/api/ledger/' + runId);
+    if (!r.ok) { out.textContent = 'the ledger is out of reach just now'; return; }
+    text = await r.text();
+  } catch { out.textContent = 'the ledger is out of reach just now'; return; }
+  const lines = text.split('\n').filter(l => l.trim());
+  const enc = new TextEncoder();
+  const fail = (msg) => { out.className = 'verify-out broke'; out.textContent = msg; };
+  let prev = '0'.repeat(64);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const at = line.indexOf(',"hash":"');
+    if (at < 0) { fail(`CHAIN BROKEN at entry ${i}: no hash recorded`); return; }
+    const stored = line.substr(at + 9, 64);
+    const body = line.slice(0, at) + line.slice(at + 9 + 64 + 1);
+    const digest = await crypto.subtle.digest('SHA-256', enc.encode(body));
+    const hex = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+    let entry;
+    try { entry = JSON.parse(line); } catch {
+      fail(`CHAIN BROKEN at entry ${i}: the line does not parse`); return;
+    }
+    if (entry.seq !== i) { fail(`CHAIN BROKEN: expected entry ${i}, found ${entry.seq}`); return; }
+    if (hex !== stored) { fail(`CHAIN BROKEN at entry ${i}: contents do not match the recorded hash`); return; }
+    if (entry.prev !== prev) { fail(`CHAIN BROKEN at entry ${i}: does not follow the entry before it`); return; }
+    prev = stored;
+  }
+  out.textContent = `chain intact: ${lines.length} entries recomputed in this browser, ` +
+    `head ${prev.slice(0, 16)}… The chain is this half of the check; ` +
+    `“crucible verify” on your machine replays the policy decisions too.`;
 }
 
 /* ------------------------------------------------------------ repo form */
@@ -607,6 +659,23 @@ $('byo-forget').addEventListener('click', async () => {
     byoHint('Forgotten. Runs go back to this deployment’s own model.');
   } catch {
     byoHint('The server is out of reach just now. Try again in a moment.', true);
+  }
+});
+
+$('demo-go').addEventListener('click', async () => {
+  $('demo-go').disabled = true;
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: 'full' }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { hint(d.error || 'The arena declined that one. Try again in a moment.', true); return; }
+    attach(d.run_id);
+  } catch {
+    hint('The server is out of reach just now. Try again in a moment.', true);
+  } finally {
+    $('demo-go').disabled = false;
   }
 });
 

@@ -602,6 +602,11 @@ def start_run(task_key: str, repo_url: str | None = None,
                 review_policy(workspace, run_tests=tests_enabled), ledger, budget,
                 emit=lambda event: REGISTRY.publish(run_id, redact.scrub_value(event)),
                 source=header,
+                # The registry's name, so the stream's run_finished, the
+                # record's first entry and the file the download route serves
+                # all agree. Three ids for one run is how the interface's own
+                # ledger link spent a while pointing at a 404.
+                run_id=run_id,
             )
             orchestrator.run(task)
         except BaseException as exc:  # noqa: BLE001 - the browser must be told

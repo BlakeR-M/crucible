@@ -368,3 +368,25 @@ a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
 
 .head .hlink { font-size: var(--t-marg); color: var(--ink-muted);
                white-space: nowrap; }
+
+/* --------------------------------------------------------------- demo run */
+
+.demo-run { margin: 14px 0 4px; }
+.demo-run button { font: inherit; font-size: var(--t-sub); padding: 9px 22px;
+                   cursor: pointer; background: var(--ink);
+                   color: var(--paper); border: 0; }
+.demo-run button:hover:not(:disabled) { background: var(--ink-muted); }
+.demo-run button:disabled { background: var(--ink-faint); cursor: default; }
+.demo-run .hint { margin-top: 6px; font-size: var(--t-marg);
+                  color: var(--ink-muted); }
+
+/* The in-browser chain check on the closing panel. */
+.verify-here { font: inherit; font-size: var(--t-marg); padding: 0;
+               border: 0; background: none; cursor: pointer;
+               color: var(--ink); text-decoration: underline;
+               text-underline-offset: 2px; }
+.verify-here:disabled { color: var(--ink-faint); cursor: default; }
+.verify-out { margin-top: 6px; font-size: var(--t-marg);
+              color: var(--ink-muted);
+              font-variant-numeric: tabular-nums lining-nums; }
+.verify-out.broke { color: var(--rubric); }

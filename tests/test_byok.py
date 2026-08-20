@@ -217,6 +217,12 @@ def run_checks(tmp: Path) -> None:
     provider_event = next((e for e in state["events"] if e["kind"] == "provider"), None)
     check("a provider event names the kind before the run starts",
           provider_event is not None and provider_event["provider_kind"] == "offline")
+    finished = next(e for e in state["events"] if e["kind"] == "run_finished")
+    check("the stream, the record and the file carry one run id: "
+          "run_finished names the admitted run",
+          finished.get("run_id") == body["run_id"], str(finished.get("run_id")))
+    check("and the ledger file sits under that name",
+          (server.RUNS / f"{body['run_id']}.jsonl").is_file())
 
     section("run: with a key, the visitor's provider")
     status, body = server.admit_key({"provider": "gemini", "api_key": GOOD_KEY}, sid, cookie)

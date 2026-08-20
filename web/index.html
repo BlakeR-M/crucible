@@ -46,8 +46,9 @@
     and the whole run lands in a hash-chained ledger you can download from
     this page.</p>
     <p>This deployment runs a free stand-in model, so have a play. Attach your
-    own OpenAI or Gemini key to run a live one. The code is standard-library
-    Python, and it runs on your machine too:</p>
+    own OpenAI or Gemini key and it reviews for real, including a public
+    repository of yours pasted straight into the page. The code is
+    standard-library Python, and it runs on your machine too:</p>
     <p class="intro-repo"><a href="https://github.com/BlakeR-M/crucible">github.com/BlakeR-M/crucible</a></p>
     <div class="intro-actions">
       <button id="intro-go" type="button">Open the tool</button>
@@ -83,8 +84,13 @@
     <div class="stage" id="stage">
       <div class="idle" id="idle">
         <p><b>Nothing has run yet in this session.</b></p>
-        <p>Ask the agent on the left to start a review, or ask it what the
-           policy lets an agent do before you set one loose.</p>
+        <div class="demo-run">
+          <button type="button" id="demo-go">Run a review of the demo codebase</button>
+          <p class="hint">A bundled booking service with nine planted defects.
+             Watch what gets found, what gets destroyed, and what survives.</p>
+        </div>
+        <p>Or ask the agent on the left, in words: it can start a review, and
+           it can tell you what the policy lets an agent do.</p>
         <form class="repo" id="repo" autocomplete="off">
           <label for="repo-url">Review a public repository</label>
           <div class="row">

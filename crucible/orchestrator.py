@@ -360,7 +360,12 @@ def _as_int(value, default: int = 0) -> int:
 class Orchestrator:
     def __init__(self, provider, workspace: Path, policy: Policy, ledger: Ledger,
                  budget: Budget, emit=None, *, max_workers: int = 6,
-                 source: dict | None = None):
+                 source: dict | None = None, run_id: str | None = None):
+        # A caller that already named this run (the server names it when it
+        # admits it, and that name is the ledger's filename and the download
+        # route) passes the name in, so the record, the stream and the file
+        # all carry one id. Left empty, run() draws its own.
+        self.run_id = run_id
         self.provider = provider
         self.workspace = Path(workspace).resolve()
         # Where the workspace came from, when it came from somewhere: the
@@ -1006,7 +1011,7 @@ class Orchestrator:
         import time
 
         started = time.time()
-        run_id = uuid.uuid4().hex[:12]
+        run_id = self.run_id or uuid.uuid4().hex[:12]
         halted = ""
         self.ledger.append(
             "run_started", run_id=run_id, task=task,

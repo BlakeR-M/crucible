@@ -234,6 +234,27 @@ def ledger_checks(tmp: Path) -> None:
           denied["payload"]["reason"] == "no network in policy")
     check("head is the tip of the chain", led.head == led.entries()[-1]["hash"])
 
+    # The browser's chain check works by byte surgery on the raw line: it
+    # cuts the ,"hash":"…" span out and hashes what is left, never
+    # re-serialising. This check is the contract it stands on. The payload
+    # carries the values most likely to break a re-serialiser (an exponent
+    # float, unicode, nesting), which surgery must not care about.
+    import hashlib as _hl
+    surgical = tmp / "surgery.jsonl"
+    sled = Ledger(surgical, clock=lambda: next(ticks))
+    sled.append("nasty", spend=round(0.00001, 5), note="arrow → quote \"",
+                nested={"z": [1.5, "x"], "a": None})
+    sled.append("plain", ok=True)
+    intact = True
+    for line in surgical.read_text(encoding="utf-8").splitlines():
+        at = line.index(',"hash":"')
+        stored = line[at + 9:at + 9 + 64]
+        body = line[:at] + line[at + 9 + 64 + 1:]
+        intact = intact and (
+            _hl.sha256(body.encode("utf-8")).hexdigest() == stored)
+    check("each raw line minus its hash field is the exact hashed body, "
+          "which the in-browser verifier relies on", intact)
+
     section("ledger: tampering shows")
 
     def rewrite(mutate) -> Ledger:
